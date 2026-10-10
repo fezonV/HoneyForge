@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HoneyForge — обращения</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #edf1f5; color: #23364b; font: 16px/1.5 "Segoe UI", sans-serif; }
+    main { max-width: 1100px; margin: 48px auto; padding: 0 24px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 32px; font-weight: 600; }
+    p { color: #526577; }
+    a { color: #245c8c; text-underline-offset: 4px; }
+    a:focus-visible { outline: 3px solid #305d85; outline-offset: 4px; }
+    #status { min-height: 24px; }
+    #status.error { color: #a12629; }
+    .table-wrap { overflow-x: auto; background: white; border-top: 3px solid #305d85; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 14px 18px; border-bottom: 1px solid #d7dfe8; }
+    th { background: #e5ecf3; font-weight: 600; }
+    td { vertical-align: top; }
+    td:last-child { overflow-wrap: anywhere; min-width: 180px; }
+    .empty { color: #526577; padding: 32px 18px; }
+    footer { margin-top: 20px; color: #526577; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>HoneyForge / Обращения</h1><a href="/" target="_blank" rel="noopener">Открыть ловушку</a></header>
+    <p>Последние 100 запросов к внутреннему архиву. Новые события сверху.</p>
+    <p id="status" role="status">Подключаемся…</p>
+    <div class="table-wrap">
+      <table aria-label="Обращения к ловушке">
+        <thead><tr><th scope="col">Время</th><th scope="col">IP</th><th scope="col">Метод</th><th scope="col">Путь</th></tr></thead>
+        <tbody id="events"><tr><td colspan="4" class="empty">Загружаем события…</td></tr></tbody>
+      </table>
+    </div>
+    <footer>Обновление каждые 2 секунды. Журнал очищается при перезапуске сервера.</footer>
+  </main>
+  <script>
+    const rows = document.getElementById('events');
+    const status = document.getElementById('status');
+
+    async function refresh() {
+      try {
+        const response = await fetch('/api/events', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const events = await response.json();
+        if (!Array.isArray(events)) throw new Error('Invalid events');
+        const fragment = document.createDocumentFragment();
+        for (const event of events) {
+          const row = document.createElement('tr');
+          for (const value of [new Date(event.time).toLocaleString('ru-RU'), event.ip, event.method, event.path]) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+          }
+          fragment.appendChild(row);
+        }
+        if (!events.length) {
+          const row = document.createElement('tr');
+          const cell = document.createElement('td');
+          cell.colSpan = 4;
+          cell.className = 'empty';
+          cell.textContent = 'Обращений пока нет. Откройте ловушку и выберите раздел архива.';
+          row.appendChild(cell);
+          fragment.appendChild(row);
+        }
+        rows.replaceChildren(fragment);
+        status.className = '';
+        status.textContent = 'Связь есть · событий: ' + events.length + ' · обновлено в ' + new Date().toLocaleTimeString('ru-RU');
+      } catch (error) {
+        status.className = 'error';
+        status.textContent = 'Нет связи с сервером. Проверьте, что он запущен. Повторим запрос автоматически.';
+      } finally {
+        setTimeout(refresh, 2000);
+      }
+    }
+    refresh();
+  </script>
+</body>
+</html>
