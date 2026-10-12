@@ -38,11 +38,11 @@ function syncState() {
 function changeState(next, message) {
   state = next;
   syncState();
-  render();
+  render(true);
   if (message) $('action-status').textContent = message;
 }
 
-function render() {
+function render(resetScroll = false) {
   $('preview-caption').textContent = (level === 'low' ? 'Low' : 'Medium') + ' · ' + states[level].find(item => item[0] === state)[1];
   if (!previewReady) return;
   const root = preview.contentDocument.getElementById('template-root');
@@ -66,6 +66,7 @@ function render() {
     heading.tabIndex = -1;
     heading.focus();
   }
+  if (resetScroll) preview.contentWindow.scrollTo(0, 0);
 }
 
 for (const radio of document.querySelectorAll('[name="level"]')) {
@@ -84,7 +85,7 @@ for (const input of document.querySelectorAll('[data-field]')) {
 $('document').addEventListener('change', event => {
   selectedDocumentId = event.target.value;
   syncDocumentEditor();
-  render();
+  render(true);
 });
 for (const input of document.querySelectorAll('[data-doc-field]')) {
   input.addEventListener('input', () => {
@@ -109,12 +110,12 @@ function reset() {
   preview.style.width = '100%';
   syncDocumentEditor();
   syncState();
-  render();
+  render(true);
   $('action-status').textContent = 'Исходный пример восстановлен.';
 }
 preview.addEventListener('load', () => {
   previewReady = true;
-  render();
+  render(true);
 });
 // The iframe can finish loading before the module and its listener.
 if (preview.contentDocument?.getElementById('template-root')) previewReady = true;

@@ -43,7 +43,7 @@ export function renderMedium(root, model, handlers = {}) {
       return;
     }
     const article = element(doc, 'article', undefined, 'file-view');
-    article.append(back(), element(doc, 'p', item.path, 'view-path'), element(doc, 'h2', item.title), element(doc, 'p', displayDate(item.date) + ' · TXT · ' + fileSize(item.body), 'file-meta'), element(doc, 'pre', item.body, 'file-body'));
+    article.append(back(), element(doc, 'p', item.path, 'view-path'), element(doc, 'h2', item.title || 'Без названия'), element(doc, 'p', displayDate(item.date) + ' · TXT · ' + fileSize(item.body), 'file-meta'), element(doc, 'pre', item.body, 'file-body'));
     main.append(article);
   } else {
     catalog(doc, main, model, id => handlers.openFile?.(id));
