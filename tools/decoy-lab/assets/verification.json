@@ -1,0 +1,1052 @@
+{
+  "browser": "Codex In-app Browser (Chromium)",
+  "scope": "Issue #18 local static lab only",
+  "checks": [
+    {
+      "name": "six synthetic documents",
+      "status": "PASS",
+      "details": [
+        "rules",
+        "review",
+        "report",
+        "inventory",
+        "update",
+        "reader"
+      ]
+    },
+    {
+      "name": "file mapping rules",
+      "status": "PASS",
+      "details": {
+        "title": "Порядок ведения архива",
+        "path": "/regulations/archive-rules.txt"
+      }
+    },
+    {
+      "name": "return to files rules",
+      "status": "PASS"
+    },
+    {
+      "name": "file mapping review",
+      "status": "PASS",
+      "details": {
+        "title": "Регламент квартальной сверки",
+        "path": "/regulations/quarterly-review.txt"
+      }
+    },
+    {
+      "name": "return to files review",
+      "status": "PASS"
+    },
+    {
+      "name": "file mapping report",
+      "status": "PASS",
+      "details": {
+        "title": "Отчёт за III квартал",
+        "path": "/reports/2026-q3.txt"
+      }
+    },
+    {
+      "name": "return to files report",
+      "status": "PASS"
+    },
+    {
+      "name": "file mapping inventory",
+      "status": "PASS",
+      "details": {
+        "title": "Сводка состава каталога",
+        "path": "/reports/catalog-summary.txt"
+      }
+    },
+    {
+      "name": "return to files inventory",
+      "status": "PASS"
+    },
+    {
+      "name": "file mapping update",
+      "status": "PASS",
+      "details": {
+        "title": "Обновление каталога",
+        "path": "/notes/catalog-update.txt"
+      }
+    },
+    {
+      "name": "return to files update",
+      "status": "PASS"
+    },
+    {
+      "name": "file mapping reader",
+      "status": "PASS",
+      "details": {
+        "title": "Памятка читателя",
+        "path": "/notes/reader-guide.txt"
+      }
+    },
+    {
+      "name": "return to files reader",
+      "status": "PASS"
+    },
+    {
+      "name": "demo logout switches to login",
+      "status": "PASS"
+    },
+    {
+      "name": "login button disabled",
+      "status": "PASS"
+    },
+    {
+      "name": "Low static unavailable response",
+      "status": "PASS"
+    },
+    {
+      "name": "Low return to catalog",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update organization",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert organization",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert organization",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update service",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert service",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert service",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update title",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert title",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert title",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update description",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert description",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert description",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update doc-title",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert doc-title",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert doc-title",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update doc-path",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert doc-path",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert doc-path",
+      "status": "PASS"
+    },
+    {
+      "name": "live text update doc-body",
+      "status": "PASS"
+    },
+    {
+      "name": "injection inert doc-body",
+      "status": "PASS"
+    },
+    {
+      "name": "no alert doc-body",
+      "status": "PASS"
+    },
+    {
+      "name": "live date update",
+      "status": "PASS"
+    },
+    {
+      "name": "live UTF-8 size recalculated",
+      "status": "PASS"
+    },
+    {
+      "name": "long file text wraps",
+      "status": "PASS",
+      "details": {
+        "scrollWidth": 928,
+        "width": 928
+      }
+    },
+    {
+      "name": "reset restores original fields and state",
+      "status": "PASS"
+    },
+    {
+      "name": "reset restores width",
+      "status": "PASS"
+    },
+    {
+      "name": "reset restores document selection",
+      "status": "PASS"
+    },
+    {
+      "name": "reload restores fixture",
+      "status": "PASS"
+    },
+    {
+      "name": "keyboard Tab reaches Low",
+      "status": "PASS",
+      "details": {
+        "name": "level",
+        "outline": "solid",
+        "value": "low"
+      }
+    },
+    {
+      "name": "keyboard arrow changes level",
+      "status": "PASS"
+    },
+    {
+      "name": "keyboard Tab reaches state",
+      "status": "PASS"
+    },
+    {
+      "name": "keyboard state selection with arrows and Enter",
+      "status": "PASS"
+    },
+    {
+      "name": "keyboard Tab reaches editor",
+      "status": "PASS"
+    },
+    {
+      "name": "keyboard Shift Tab returns",
+      "status": "PASS"
+    },
+    {
+      "name": "visible keyboard focus",
+      "status": "PASS",
+      "details": {
+        "color": "rgb(163, 77, 11)",
+        "outline": "solid",
+        "width": "3px"
+      }
+    },
+    {
+      "name": "keyboard Enter opens file",
+      "status": "PASS"
+    },
+    {
+      "name": "focus restored after template action",
+      "status": "PASS",
+      "details": {
+        "active": true,
+        "outline": "solid"
+      }
+    },
+    {
+      "name": "keyboard Space returns to list",
+      "status": "PASS"
+    }
+  ],
+  "captures": [
+    {
+      "name": "low-catalog-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/low-catalog-1440x900.jpg"
+    },
+    {
+      "name": "low-empty-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/low-empty-1440x900.jpg"
+    },
+    {
+      "name": "low-not-found-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/low-not-found-1440x900.jpg"
+    },
+    {
+      "name": "low-unavailable-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/low-unavailable-1440x900.jpg"
+    },
+    {
+      "name": "medium-login-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-login-1440x900.jpg"
+    },
+    {
+      "name": "medium-login-error-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-login-error-1440x900.jpg"
+    },
+    {
+      "name": "medium-files-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-files-1440x900.jpg"
+    },
+    {
+      "name": "medium-file-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-file-1440x900.jpg"
+    },
+    {
+      "name": "medium-empty-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-empty-1440x900.jpg"
+    },
+    {
+      "name": "medium-expired-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/medium-expired-1440x900.jpg"
+    },
+    {
+      "name": "low-catalog-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/low-catalog-1280x720.jpg"
+    },
+    {
+      "name": "low-empty-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/low-empty-1280x720.jpg"
+    },
+    {
+      "name": "low-not-found-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/low-not-found-1280x720.jpg"
+    },
+    {
+      "name": "low-unavailable-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/low-unavailable-1280x720.jpg"
+    },
+    {
+      "name": "medium-login-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-login-1280x720.jpg"
+    },
+    {
+      "name": "medium-login-error-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-login-error-1280x720.jpg"
+    },
+    {
+      "name": "medium-files-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-files-1280x720.jpg"
+    },
+    {
+      "name": "medium-file-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-file-1280x720.jpg"
+    },
+    {
+      "name": "medium-empty-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-empty-1280x720.jpg"
+    },
+    {
+      "name": "medium-expired-1280x720",
+      "viewport": [
+        1280,
+        720
+      ],
+      "path": "assets/screenshots/medium-expired-1280x720.jpg"
+    },
+    {
+      "name": "low-catalog-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/low-catalog-narrow390.jpg"
+    },
+    {
+      "name": "low-empty-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/low-empty-narrow390.jpg"
+    },
+    {
+      "name": "low-not-found-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/low-not-found-narrow390.jpg"
+    },
+    {
+      "name": "low-unavailable-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/low-unavailable-narrow390.jpg"
+    },
+    {
+      "name": "medium-login-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-login-narrow390.jpg"
+    },
+    {
+      "name": "medium-login-error-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-login-error-narrow390.jpg"
+    },
+    {
+      "name": "medium-files-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-files-narrow390.jpg"
+    },
+    {
+      "name": "medium-file-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-file-narrow390.jpg"
+    },
+    {
+      "name": "medium-empty-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-empty-narrow390.jpg"
+    },
+    {
+      "name": "medium-expired-narrow390",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "path": "assets/screenshots/medium-expired-narrow390.jpg"
+    },
+    {
+      "name": "laboratory-1440x900",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/laboratory-1440x900.jpg"
+    },
+    {
+      "name": "editing-document",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/editing-document.jpg"
+    },
+    {
+      "name": "keyboard-focus",
+      "viewport": [
+        1440,
+        900
+      ],
+      "path": "assets/screenshots/keyboard-focus.jpg"
+    },
+    {
+      "name": "low-catalog-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 621.9765625,
+        "top": 571.9296875
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/low-catalog-1440x900-bottom.jpg"
+    },
+    {
+      "name": "low-empty-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622,
+        "top": 571.953125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/low-empty-1440x900-bottom.jpg"
+    },
+    {
+      "name": "low-not-found-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622,
+        "top": 571.953125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/low-not-found-1440x900-bottom.jpg"
+    },
+    {
+      "name": "low-unavailable-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622,
+        "top": 571.953125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/low-unavailable-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-login-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 621.9921875,
+        "top": 571.9453125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-login-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-login-error-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622.1796875,
+        "top": 572.1328125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-login-error-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-files-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622.171875,
+        "top": 572.125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-files-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-file-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 621.984375,
+        "top": 571.9375
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-file-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-empty-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622,
+        "top": 571.953125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-empty-1440x900-bottom.jpg"
+    },
+    {
+      "name": "medium-expired-1440x900-bottom",
+      "viewport": [
+        1440,
+        900
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 622.1796875,
+        "top": 572.1328125
+      },
+      "frameHeight": 622,
+      "path": "assets/screenshots/medium-expired-1440x900-bottom.jpg"
+    },
+    {
+      "name": "low-catalog-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.9765625,
+        "top": 391.9296875
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-catalog-1280x720-bottom.jpg"
+    },
+    {
+      "name": "low-empty-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.828125,
+        "top": 391.78125
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-empty-1280x720-bottom.jpg"
+    },
+    {
+      "name": "low-not-found-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.0234375,
+        "top": 391.9765625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-not-found-1280x720-bottom.jpg"
+    },
+    {
+      "name": "low-unavailable-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.0234375,
+        "top": 391.9765625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-unavailable-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-login-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.9921875,
+        "top": 391.9453125
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-login-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-login-error-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1796875,
+        "top": 392.1328125
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-login-error-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-files-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.171875,
+        "top": 392.125
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-files-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-file-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.984375,
+        "top": 391.9375
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-file-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-empty-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.0234375,
+        "top": 391.9765625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-empty-1280x720-bottom.jpg"
+    },
+    {
+      "name": "medium-expired-1280x720-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": "fluid",
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1796875,
+        "top": 392.1328125
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-expired-1280x720-bottom.jpg"
+    },
+    {
+      "name": "low-catalog-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.9375,
+        "top": 391.890625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-catalog-narrow390-bottom.jpg"
+    },
+    {
+      "name": "low-empty-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.203125,
+        "top": 392.15625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-empty-narrow390-bottom.jpg"
+    },
+    {
+      "name": "low-not-found-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.203125,
+        "top": 392.15625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-not-found-narrow390-bottom.jpg"
+    },
+    {
+      "name": "low-unavailable-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.8984375,
+        "top": 391.8515625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/low-unavailable-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-login-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.9765625,
+        "top": 391.9296875
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-login-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-login-error-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1640625,
+        "top": 392.1171875
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-login-error-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-files-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1328125,
+        "top": 392.0859375
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-files-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-file-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1484375,
+        "top": 392.1015625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-file-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-empty-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 441.8984375,
+        "top": 391.8515625
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-empty-narrow390-bottom.jpg"
+    },
+    {
+      "name": "medium-expired-narrow390-bottom",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "footer visible",
+      "footer": {
+        "bottom": 442.1640625,
+        "top": 392.1171875
+      },
+      "frameHeight": 442,
+      "path": "assets/screenshots/medium-expired-narrow390-bottom.jpg"
+    },
+    {
+      "name": "low-catalog-narrow390-middle",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "intermediate content",
+      "path": "assets/screenshots/low-catalog-narrow390-middle.jpg"
+    },
+    {
+      "name": "medium-files-narrow390-middle",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "intermediate content",
+      "path": "assets/screenshots/medium-files-narrow390-middle.jpg"
+    },
+    {
+      "name": "medium-file-narrow390-middle",
+      "viewport": [
+        1280,
+        720
+      ],
+      "previewWidth": 390,
+      "scroll": "intermediate content",
+      "path": "assets/screenshots/medium-file-narrow390-middle.jpg"
+    }
+  ],
+  "console": [],
+  "captureNotes": "All bottom captures regenerated by clicking the footer; footer rectangle bottom validated against iframe clientHeight. This avoids unreliable synthetic Home/End scrolling. Top captures use reset + fresh AX + waited screenshot. Intermediate narrow catalog and file-body captures cover long content.",
+  "reviews": [
+    {
+      "type": "independent read-only design-system and functional integrity",
+      "verdict": "PASS",
+      "confidence": "HIGH",
+      "capturesInspected": 66,
+      "comparisonPNGsInspected": 2,
+      "blocking": []
+    },
+    {
+      "type": "independent read-only visual and Cyrillic review",
+      "verdict": "PASS",
+      "confidence": "HIGH",
+      "capturesInspected": 66,
+      "comparisonPNGsInspected": 2,
+      "blocking": []
+    }
+  ]
+}
