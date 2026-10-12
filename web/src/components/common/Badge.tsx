@@ -23,7 +23,7 @@ export const StatusBadge: React.FC<{ status: TrapStatus }> = ({ status }) => {
   }[status];
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${config.classes}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${config.classes}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
       {config.text}
     </span>
@@ -47,7 +47,7 @@ export const LevelBadge: React.FC<{ level: InteractionLevel }> = ({ level }) => 
   }[level];
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${config.classes}`}>
+    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-semibold border ${config.classes}`}>
       {config.label}
     </span>
   );
@@ -56,13 +56,13 @@ export const LevelBadge: React.FC<{ level: InteractionLevel }> = ({ level }) => 
 export const RoleBadge: React.FC<{ role: UserRole }> = ({ role }) => {
   if (role === 'operator') {
     return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-brand-50 text-brand-700 border border-brand-200">
+      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-brand-50 text-brand-700 border border-brand-200">
         Оператор (C2 Admin)
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-300">
+    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-300">
       Наблюдатель (Viewer)
     </span>
   );
@@ -82,7 +82,7 @@ export const SeverityBadge: React.FC<{ severity: 'info' | 'warning' | 'critical'
   }[severity];
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${config}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs border ${config}`}>
       {label}
     </span>
   );

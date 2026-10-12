@@ -41,20 +41,12 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Top utility bar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo & Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-brand-600 flex items-center justify-center text-white shadow-xs">
-              <Shield className="w-5 h-5" />
+          {/* Logo & Brand: только название проекта слева */}
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-md bg-brand-600 flex items-center justify-center text-white shadow-xs">
+              <Shield className="w-4.5 h-4.5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg text-slate-900 tracking-tight">HoneyForge</span>
-                <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                  C2 Core
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 hidden sm:block">Центр управления ловушками-приманками</p>
-            </div>
+            <span className="font-bold text-lg text-slate-900 tracking-tight">HoneyForge</span>
           </div>
 
           {/* Center Navigation */}
@@ -65,7 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium transition-all ${
                     isActive
                       ? 'bg-brand-50 text-brand-700 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -83,10 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Right section: WebSocket pill, DevMode, Role, Profile */}
-          <div className="flex items-center gap-3">
-            {/* Realtime WebSocket indicator */}
+          <div className="flex items-center gap-2.5">
+            {/* Realtime WebSocket indicator: rounded-md */}
             <div
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border ${
                 wsStatus === 'connected'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : wsStatus === 'connecting'
@@ -115,10 +107,10 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
 
-            {/* Dev mode switch badge */}
+            {/* Dev mode switch badge: rounded-md */}
             <button
               onClick={toggleDevMode}
-              className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
+              className={`text-xs px-2.5 py-1.5 rounded-md font-medium border transition-colors ${
                 isDevMode
                   ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
                   : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
@@ -128,14 +120,14 @@ export const Header: React.FC<HeaderProps> = ({
               {isDevMode ? '⚠️ Фикстуры BE-01' : 'Боевой API'}
             </button>
 
-            {/* Role indicator and quick switcher */}
+            {/* Role indicator: rounded-md */}
             {role && (
               <div className="flex items-center gap-1.5">
                 <RoleBadge role={role} />
                 {isDevMode && (
                   <button
                     onClick={() => switchDevRole(role === 'operator' ? 'viewer' : 'operator')}
-                    className="p-1 text-slate-400 hover:text-slate-600 rounded hover:bg-slate-100"
+                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors"
                     title={`Переключить роль на ${role === 'operator' ? 'Viewer' : 'Operator'}`}
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -151,7 +143,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
               <button
                 onClick={logout}
-                className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                className="p-1.5 text-slate-400 hover:text-rose-600 rounded-md hover:bg-rose-50 transition-colors"
                 title="Выйти из системы"
                 aria-label="Выйти из системы"
               >

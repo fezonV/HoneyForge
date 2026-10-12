@@ -71,18 +71,10 @@ const MainLayout: React.FC = () => {
         {currentTab === 'audit' && <AuditScreen />}
       </main>
 
-      {/* Standard Footer */}
-      <footer className="bg-white border-t border-slate-200 py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between text-xs text-slate-500 gap-2">
-          <div className="flex items-center gap-2">
-            <span>HoneyForge C2 Platform · Мадригал (Хакатон UmirHack)</span>
-            <span className="text-slate-300">|</span>
-            <span>Контур управления: Изолирован</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span>Версия API: v1.0-contract</span>
-            <span>Статус: Готов к интеграции BE-01/BE-04</span>
-          </div>
+      {/* Footer */}
+      <footer className="bg-white border-t border-slate-200 py-3 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-center text-xs text-slate-500">
+          <span>HoneyForge · Проект разработан для хакатона UmirHack (III Межрегиональный Хакатон)</span>
         </div>
       </footer>
     </div>
