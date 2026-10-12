@@ -192,4 +192,4 @@ Invoke-RestMethod http://127.0.0.1:8080/api/events
 └── README.md                  # Статус, запуск и пределы готовности
 ```
 
-Подробное объяснение текущей реализации и словарь терминов находятся в [docs/WORK_STATUS_AND_GLOSSARY.md](docs/WORK_STATUS_AND_GLOSSARY.md). План и матрица проверки BE-01 доступны в [docs/BE01_PLAN.md](docs/BE01_PLAN.md) и [docs/BE01_ACCEPTANCE.md](docs/BE01_ACCEPTANCE.md).
+Подробное объяснение текущей реализации и словарь терминов находятся в [docs/WORK_STATUS_AND_GLOSSARY.md](docs/WORK_STATUS_AND_GLOSSARY.md), а описание папок и устройства Go-проекта — в [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md). План и матрица проверки BE-01 доступны в [docs/BE01_PLAN.md](docs/BE01_PLAN.md) и [docs/BE01_ACCEPTANCE.md](docs/BE01_ACCEPTANCE.md).
