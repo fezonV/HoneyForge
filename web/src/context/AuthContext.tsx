@@ -9,7 +9,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   isDevMode: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string; isBackendUnavailable?: boolean }>;
   logout: () => Promise<void>;
   switchDevRole: (role: UserRole) => Promise<void>;
   toggleDevMode: () => void;
@@ -55,18 +55,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('honeyforge-devmode-changed', handleDevModeChange);
   }, [checkSession]);
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (
+    username: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string; isBackendUnavailable?: boolean }> => {
     try {
       const session = await api.auth.login(username, password);
       if (session.authenticated && session.user) {
         setUser(session.user);
         notify('success', 'Авторизация успешна', `Добро пожаловать, ${session.user.display_name}`);
-        return true;
+        return { success: true };
       }
-      return false;
+      return { success: false, error: 'Сервер вернул пустую сессию' };
     } catch (err: any) {
-      notify('error', 'Ошибка авторизации', err.message || 'Проверьте логин и пароль');
-      return false;
+      const isUnavailable = err.status >= 500 || err.status === 0 || err.isNetworkError;
+      const errorMsg = isUnavailable
+        ? `Сервер бэкенда недоступен (${err.message || err.status || '500'})`
+        : err.message || 'Неверное имя пользователя или пароль';
+
+      notify('error', 'Ошибка авторизации', errorMsg);
+      return { success: false, error: errorMsg, isBackendUnavailable: isUnavailable };
     }
   };
 

@@ -1,14 +1,24 @@
 import React, { useState } from 'react';
-import { Shield, Lock, User, ArrowRight, AlertCircle, Info } from 'lucide-react';
+import {
+  Shield,
+  Lock,
+  User,
+  ArrowRight,
+  AlertCircle,
+  Info,
+  Server,
+  Zap,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/common/Button';
 
 export const LoginScreen: React.FC = () => {
-  const { login, isLoading } = useAuth();
+  const { login, isLoading, isDevMode, toggleDevMode } = useAuth();
   const [username, setUsername] = useState<string>('soc_operator');
   const [password, setPassword] = useState<string>('HoneyForge2026!');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isBackendError, setIsBackendError] = useState<boolean>(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,18 +26,39 @@ export const LoginScreen: React.FC = () => {
 
     setIsSubmitting(true);
     setErrorMessage(null);
+    setIsBackendError(false);
 
-    const success = await login(username.trim(), password);
-    if (!success) {
-      setErrorMessage('Неверное имя пользователя или пароль. Проверьте введенные данные.');
+    const res = await login(username.trim(), password);
+    if (!res.success) {
+      setErrorMessage(res.error || 'Неверное имя пользователя или пароль.');
+      if (res.isBackendUnavailable) {
+        setIsBackendError(true);
+      }
     }
     setIsSubmitting(false);
   };
 
-  const setPreset = (u: string, p: string) => {
+  const setPreset = async (u: string, p: string) => {
     setUsername(u);
     setPassword(p);
     setErrorMessage(null);
+    setIsBackendError(false);
+
+    // If currently in real API mode, clicking a demo credential automatically activates dev fixtures
+    if (!isDevMode) {
+      toggleDevMode();
+    }
+  };
+
+  const handleSwitchToFixturesAndLogin = async () => {
+    if (!isDevMode) {
+      toggleDevMode();
+    }
+    setErrorMessage(null);
+    setIsBackendError(false);
+    setIsSubmitting(true);
+    await login(username.trim() || 'soc_operator', password || 'HoneyForge2026!');
+    setIsSubmitting(false);
   };
 
   return (
@@ -42,13 +73,54 @@ export const LoginScreen: React.FC = () => {
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
+      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 shadow-sm rounded-xl border border-slate-200 sm:px-10">
-          <form className="space-y-5" onSubmit={handleSubmit}>
+          {/* Mode Switcher Bar */}
+          <div className="mb-5 p-3 rounded-lg border flex items-center justify-between text-xs transition-colors bg-slate-50 border-slate-200">
+            <div className="flex items-center gap-2">
+              <Server className="w-4 h-4 text-slate-500" />
+              <div>
+                <span className="text-slate-500 block text-[11px]">Режим источника:</span>
+                <span className="font-semibold text-slate-800">
+                  {isDevMode ? '⚠️ Фикстуры BE-01 (Автономный)' : 'Боевой сервер API (/api)'}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleDevMode}
+              className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                isDevMode
+                  ? 'bg-amber-100/70 text-amber-900 border-amber-300 hover:bg-amber-200/70'
+                  : 'bg-white text-brand-700 border-brand-300 hover:bg-brand-50'
+              }`}
+            >
+              {isDevMode ? 'Переключить на API' : 'Включить фикстуры'}
+            </button>
+          </div>
+
+          <form className="space-y-4" onSubmit={handleSubmit}>
             {errorMessage && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                <span>{errorMessage}</span>
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-900 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                  <span className="font-medium">{errorMessage}</span>
+                </div>
+
+                {isBackendError && (
+                  <div className="pt-2 border-t border-rose-200/80">
+                    <p className="text-[11px] text-rose-700 mb-2">
+                      Бэкенд-сервер на <code>127.0.0.1:8000</code> пока не запущен. Для автономной проверки интерфейса включите фикстуры:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleSwitchToFixturesAndLogin}
+                      className="w-full py-1.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded font-medium text-xs transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <Zap className="w-3.5 h-3.5" /> Включить фикстуры BE-01 и войти
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -94,7 +166,7 @@ export const LoginScreen: React.FC = () => {
               type="submit"
               variant="primary"
               size="md"
-              className="w-full"
+              className="w-full mt-2"
               isLoading={isSubmitting || isLoading}
               rightIcon={<ArrowRight className="w-4 h-4" />}
             >
@@ -111,7 +183,7 @@ export const LoginScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPreset('soc_operator', 'HoneyForge2026!')}
-                className="p-2 border border-slate-200 rounded-lg text-left hover:bg-slate-50 transition-colors"
+                className="p-2 border border-slate-200 rounded-lg text-left hover:bg-slate-50 transition-colors focus:ring-2 focus:ring-brand-500"
               >
                 <div className="font-semibold text-slate-800">soc_operator</div>
                 <div className="text-[11px] text-brand-600">Роль: Operator (полный)</div>
@@ -119,7 +191,7 @@ export const LoginScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPreset('soc_viewer', 'ViewerPass2026!')}
-                className="p-2 border border-slate-200 rounded-lg text-left hover:bg-slate-50 transition-colors"
+                className="p-2 border border-slate-200 rounded-lg text-left hover:bg-slate-50 transition-colors focus:ring-2 focus:ring-brand-500"
               >
                 <div className="font-semibold text-slate-800">soc_viewer</div>
                 <div className="text-[11px] text-slate-500">Роль: Viewer (аудит)</div>
