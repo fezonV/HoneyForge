@@ -374,6 +374,26 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConfigResponse' }
         '401': { $ref: '#/components/responses/ApiError' }
         '404': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/heartbeat:
+    post:
+      operationId: post_agent_v1_traps_by_id_heartbeat
+      summary: Report agent and decoy service state
+      tags: [Agent enrollment]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentHeartbeatRequest' }
+      responses:
+        '200':
+          description: Heartbeat committed; updates last_seen and service status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentHeartbeatResponse' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
   /api/v1/traps/{id}/commands:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:
@@ -710,6 +730,19 @@ components:
         profile_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
         config: { $ref: '#/components/schemas/ProfileConfig' }
+    AgentHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        service_state: { type: string, enum: [unknown, running, stopped, degraded, error], default: unknown }
+    AgentHeartbeatResponse:
+      type: object
+      required: [trap_id, agent_status, service_status, last_seen]
+      properties:
+        trap_id: { type: string, format: uuid }
+        agent_status: { type: string, enum: [online] }
+        service_status: { type: string, enum: [unknown, running, stopped, degraded, error] }
+        last_seen: { type: string, format: date-time }
     QueueCommandRequest:
       type: object
       additionalProperties: false

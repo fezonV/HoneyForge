@@ -293,7 +293,8 @@ func TestControlPostgresFoundation(t *testing.T) {
 		t.Fatalf("issue enrollment=%d %s", enrollment.Code, enrollment.Body.String())
 	}
 	var enrollmentResp struct {
-		Token string `json:"token"`
+		Token   string `json:"token"`
+		AgentID string `json:"agent_id"`
 	}
 	_ = json.Unmarshal(enrollment.Body.Bytes(), &enrollmentResp)
 	cross := httptest.NewRecorder()
@@ -347,6 +348,28 @@ func TestControlPostgresFoundation(t *testing.T) {
 	h.ServeHTTP(configRes, configReq)
 	if configRes.Code != 200 || !strings.Contains(configRes.Body.String(), "lab-credential-secret") {
 		t.Fatalf("agent config=%d %s", configRes.Code, configRes.Body.String())
+	}
+	heartbeatReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/heartbeat", strings.NewReader(`{"service_state":"running"}`))
+	heartbeatReq.Header.Set("Authorization", "Bearer "+agentToken)
+	heartbeatReq.Header.Set("Content-Type", "application/json")
+	heartbeatRes := httptest.NewRecorder()
+	h.ServeHTTP(heartbeatRes, heartbeatReq)
+	if heartbeatRes.Code != 200 || !strings.Contains(heartbeatRes.Body.String(), `"agent_status":"online"`) || !strings.Contains(heartbeatRes.Body.String(), `"service_status":"running"`) {
+		t.Fatalf("agent heartbeat=%d %s", heartbeatRes.Code, heartbeatRes.Body.String())
+	}
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+		t.Fatal("revoke heartbeat fixture", err)
+	}
+	revokedHeartbeatReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/heartbeat", strings.NewReader(`{"service_state":"running"}`))
+	revokedHeartbeatReq.Header.Set("Authorization", "Bearer "+agentToken)
+	revokedHeartbeatReq.Header.Set("Content-Type", "application/json")
+	revokedHeartbeatRes := httptest.NewRecorder()
+	h.ServeHTTP(revokedHeartbeatRes, revokedHeartbeatReq)
+	if revokedHeartbeatRes.Code != 401 {
+		t.Fatalf("revoked agent heartbeat=%d", revokedHeartbeatRes.Code)
+	}
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=NULL WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+		t.Fatal("restore heartbeat fixture", err)
 	}
 	wrongBearer := httptest.NewRecorder()
 	rawReq := httptest.NewRequest("GET", "/agent/v1/traps/"+nt.ID+"/config", nil)

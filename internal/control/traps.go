@@ -535,6 +535,70 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"trap_id": id, "profile_id": *profileID, "revision": *rev, "config": cfg})
 }
+
+func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !contracts.ValidID(id) {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if token == "" || len(token) > 128 || strings.Contains(token, " ") {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	var request struct {
+		ServiceState string `json:"service_state"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	if request.ServiceState == "" {
+		request.ServiceState = "unknown"
+	}
+	switch request.ServiceState {
+	case "unknown", "running", "stopped", "degraded", "error":
+	default:
+		fail(w, r, 422, "validation_failed", "service_state is unsupported", map[string]string{"service_state": "unsupported"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	defer tx.Rollback(context.Background())
+	var agentID string
+	err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1 AND token_hash=$2 AND revoked_at IS NULL FOR UPDATE`, id, tokenHash(token)).Scan(&agentID)
+	if noRows(err) {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID); err == nil {
+		_, err = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now(),service_status=$2 WHERE id=$1 AND deleted_at IS NULL`, id, request.ServiceState)
+	}
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"trap_id": id, "agent_status": "online", "service_status": request.ServiceState, "last_seen": time.Now().UTC().Format(time.RFC3339Nano)})
+}
+
 func (s *Server) queueCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !checkID(w, r, id) {
