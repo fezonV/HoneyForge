@@ -1,0 +1,133 @@
+export type UserRole = 'operator' | 'viewer';
+
+export interface User {
+  id: string;
+  username: string;
+  role: UserRole;
+  display_name: string;
+}
+
+export interface AuthSession {
+  authenticated: boolean;
+  user: User | null;
+  csrf_token?: string;
+}
+
+export type InteractionLevel = 'low' | 'medium' | 'high';
+export type TrapStatus = 'online' | 'offline' | 'last_seen';
+
+export interface ServiceConfig {
+  name: string;
+  port: number;
+  protocol: 'tcp' | 'udp';
+  banner?: string;
+}
+
+export interface MaskingConfig {
+  jitter_enabled: boolean;
+  min_jitter_sec: number;
+  max_jitter_sec: number;
+  decoy_path: string;
+  hidden_service_name: string;
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  description: string;
+  level: InteractionLevel;
+  revision: number;
+  services: ServiceConfig[];
+  masking: MaskingConfig;
+  created_at: string;
+  updated_at: string;
+  traps_count?: number;
+}
+
+export interface Trap {
+  id: string;
+  name: string;
+  status: TrapStatus;
+  level: InteractionLevel;
+  profile_id: string;
+  profile_name: string;
+  profile_revision: number;
+  applied_revision: number;
+  ip_address: string;
+  location?: string;
+  last_seen_at: string;
+  enrollment_token?: string; // Visible only to operator
+  attacks_count_24h: number;
+}
+
+export type EventType =
+  | 'connection.opened'
+  | 'http.request'
+  | 'auth.attempt'
+  | 'session.started'
+  | 'file.read'
+  | 'command.exec'
+  | 'port.scan';
+
+export interface AttackPayload {
+  path?: string;
+  method?: string;
+  username?: string;
+  password?: string;
+  command?: string;
+  query?: string;
+  user_agent?: string;
+  raw?: string;
+}
+
+export interface AttackEvent {
+  id: string;
+  occurred_at: string;
+  trap_id: string;
+  trap_name: string;
+  level: InteractionLevel;
+  event_type: EventType;
+  source_ip: string;
+  source_port?: number;
+  destination_port: number;
+  protocol: string;
+  payload: AttackPayload;
+  ioc_flags?: string[];
+  severity: 'info' | 'warning' | 'critical';
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  operator_name: string;
+  operator_role: UserRole;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  details: string;
+  status: 'success' | 'failed';
+}
+
+export interface OverviewMetrics {
+  total_traps: number;
+  traps_low: number;
+  traps_medium: number;
+  traps_high: number;
+  online_traps: number;
+  events_24h: number;
+  events_delta_percent: number;
+  unique_attackers_24h: number;
+  top_attackers: Array<{
+    ip: string;
+    country: string;
+    events_count: number;
+    share_percent: number;
+  }>;
+}
+
+export interface ApiError {
+  code: string;
+  message: string;
+  status: number;
+  field_errors?: Record<string, string[]>;
+}
