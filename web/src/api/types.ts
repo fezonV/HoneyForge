@@ -4,22 +4,24 @@ export interface User {
   id: string;
   username: string;
   role: UserRole;
-  display_name: string;
+  display_name?: string;
 }
 
 export interface AuthSession {
   authenticated: boolean;
   user: User | null;
   csrf_token?: string;
+  expires_in?: number;
 }
 
 export type InteractionLevel = 'low' | 'medium' | 'high';
-export type TrapStatus = 'online' | 'offline' | 'last_seen';
+export type TrapStatus = 'online' | 'offline' | 'last_seen' | 'unregistered' | 'degraded';
 
 export interface ServiceConfig {
+  id?: string;
   name: string;
   port: number;
-  protocol: 'tcp' | 'udp';
+  protocol: string;
   banner?: string;
 }
 
@@ -29,6 +31,14 @@ export interface MaskingConfig {
   max_jitter_sec: number;
   decoy_path: string;
   hidden_service_name: string;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  level: string;
+  description: string;
+  capabilities: string[];
 }
 
 export interface Profile {
@@ -44,20 +54,29 @@ export interface Profile {
   traps_count?: number;
 }
 
+export interface DeploymentBinding {
+  service_id: string;
+  host_port: number;
+  bind_address?: string;
+}
+
 export interface Trap {
   id: string;
   name: string;
   status: TrapStatus;
   level: InteractionLevel;
-  profile_id: string;
-  profile_name: string;
-  profile_revision: number;
-  applied_revision: number;
+  profile_id?: string;
+  profile_name?: string;
+  profile_revision?: number;
+  applied_revision?: number;
   ip_address: string;
   location?: string;
-  last_seen_at: string;
-  enrollment_token?: string; // Visible only to operator
+  last_seen_at?: string;
+  agent_status?: string;
+  service_status?: string;
+  enrollment_token?: string; // Visible only to operator upon generation
   attacks_count_24h: number;
+  deployment_bindings?: DeploymentBinding[];
 }
 
 export type EventType =
@@ -125,9 +144,20 @@ export interface OverviewMetrics {
   }>;
 }
 
-export interface ApiError {
+// Contract-level Page container matching Go contracts.Page[T]
+export interface Page<T> {
+  items: T[];
+  next_cursor?: string;
+}
+
+// Backend API error detail matching Go contracts.APIError
+export interface ApiErrorDetail {
   code: string;
   message: string;
-  status: number;
-  field_errors?: Record<string, string[]>;
+  request_id: string;
+  fields?: Record<string, string>;
+}
+
+export interface BackendApiErrorResponse {
+  error: ApiErrorDetail;
 }

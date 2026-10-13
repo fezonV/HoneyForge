@@ -58,7 +58,7 @@ export const ProfilesScreen: React.FC = () => {
           {
             name: `${newName.trim()} Service`,
             port: Number(newPort),
-            protocol: 'tcp',
+            protocol: 'http',
             banner: newBanner.trim(),
           },
         ],
@@ -204,7 +204,12 @@ export const ProfilesScreen: React.FC = () => {
 
               {/* Card Footer */}
               <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-mono">Ревизия: rev {prof.revision}</span>
+                <div className="flex flex-col text-xs text-slate-400 font-mono">
+                  <span>Ревизия: rev {prof.revision}</span>
+                  <span className="text-[10px] text-slate-400">
+                    {prof.updated_at ? new Date(prof.updated_at).toUTCString().replace('GMT', 'UTC') : 'UTC'}
+                  </span>
+                </div>
 
                 {!isViewer && (
                   <button

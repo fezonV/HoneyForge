@@ -51,9 +51,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       checkSession();
     };
 
+    const handleSessionExpired = () => {
+      setUser(null);
+      notify('warning', 'Сессия истекла', 'Время сессии истекло. Пожалуйста, выполните вход повторно.');
+    };
+
     window.addEventListener('honeyforge-devmode-changed', handleDevModeChange);
-    return () => window.removeEventListener('honeyforge-devmode-changed', handleDevModeChange);
-  }, [checkSession]);
+    window.addEventListener('honeyforge-session-expired', handleSessionExpired);
+    return () => {
+      window.removeEventListener('honeyforge-devmode-changed', handleDevModeChange);
+      window.removeEventListener('honeyforge-session-expired', handleSessionExpired);
+    };
+  }, [checkSession, notify]);
 
   const login = async (
     username: string,
@@ -83,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await api.auth.logout();
       setUser(null);
       notify('info', 'Сессия завершена', 'Вы успешно вышли из системы управления');
-    } catch (err: any) {
+    } catch {
       setUser(null);
       notify('warning', 'Завершение сессии', 'Локальная сессия очищена');
     }
