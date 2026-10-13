@@ -42,6 +42,11 @@ type EventSendResponse struct {
 	DuplicateIDs []string `json:"duplicate_ids"`
 }
 
+type CommandResult struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -117,6 +122,29 @@ func (c *Client) SendEvents(ctx context.Context, state *State, events []contract
 	var result EventSendResponse
 	err := c.doJSON(ctx, http.MethodPost, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/events", state.Token, map[string]any{"events": events}, http.StatusOK, &result)
 	return result, err
+}
+
+func (c *Client) FetchCommands(ctx context.Context, state *State) ([]contracts.Command, error) {
+	if state == nil || state.Token == "" || state.TrapID == "" {
+		return nil, errors.New("agent state is missing its credential or trap ID")
+	}
+	var result struct {
+		Items []contracts.Command `json:"items"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/commands", state.Token, nil, http.StatusOK, &result)
+	return result.Items, err
+}
+
+func (c *Client) ReportCommand(ctx context.Context, state *State, commandID, status, commandError string) error {
+	if state == nil || state.Token == "" || state.TrapID == "" {
+		return errors.New("agent state is missing its credential or trap ID")
+	}
+	var result CommandResult
+	err := c.doJSON(ctx, http.MethodPost, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/commands/"+url.PathEscape(commandID), state.Token, CommandResult{Status: status, Error: commandError}, http.StatusOK, &result)
+	if err == nil && result.Status != status {
+		return errors.New("center returned an unexpected command status")
+	}
+	return err
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path, token string, input any, expectedStatus int, output any) error {

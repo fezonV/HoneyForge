@@ -415,6 +415,47 @@ paths:
         '401': { $ref: '#/components/responses/ApiError' }
         '409': { $ref: '#/components/responses/ApiError' }
         '422': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/commands:
+    get:
+      operationId: get_agent_v1_traps_by_id_commands
+      summary: Claim pending commands for an agent
+      tags: [Commands]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      responses:
+        '200':
+          description: Commands atomically marked delivered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageCommand' }
+        '401': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/commands/{command_id}:
+    post:
+      operationId: post_agent_v1_traps_by_id_commands_by_command_id
+      summary: Report command execution result
+      tags: [Commands]
+      security: [{ agentBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - name: command_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [applied, failed] }
+                error: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: Command result accepted }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
   /api/v1/traps/{id}/commands:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:

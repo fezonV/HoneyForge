@@ -99,6 +99,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /agent/v1/enroll", s.enroll)
 	m.HandleFunc("POST /agent/v1/traps/{id}/heartbeat", s.agentHeartbeat)
 	m.HandleFunc("POST /agent/v1/traps/{id}/events", s.agentEvents)
+	m.HandleFunc("GET /agent/v1/traps/{id}/commands", s.agentCommands)
+	m.HandleFunc("POST /agent/v1/traps/{id}/commands/{command_id}", s.agentCommandResult)
 	m.HandleFunc("GET /agent/v1/traps/{id}/config", s.agentConfig)
 	return s.requestIDs(m)
 }

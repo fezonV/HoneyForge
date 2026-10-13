@@ -695,6 +695,149 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"accepted_ids": accepted, "duplicate_ids": duplicates})
 }
 
+func (s *Server) agentCommands(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	token, ok := agentBearer(r)
+	if !ok || !contracts.ValidID(id) {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	defer tx.Rollback(context.Background())
+	var agentID string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1 AND token_hash=$2 AND revoked_at IS NULL`, id, tokenHash(token)).Scan(&agentID); err != nil {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text,trap_id::text,command_type,expected_profile_id::text,expected_revision,target_profile_id::text,target_revision,status,expires_at,created_at FROM commands WHERE trap_id=$1 AND status='queued' AND expires_at>now() ORDER BY created_at,id LIMIT 20 FOR UPDATE SKIP LOCKED`, id)
+	if err != nil {
+		fail(w, r, 503, "not_ready", "commands unavailable", nil)
+		return
+	}
+	defer rows.Close()
+	commands := make([]contracts.Command, 0)
+	ids := make([]string, 0)
+	for rows.Next() {
+		var c contracts.Command
+		var expires, created time.Time
+		if err = rows.Scan(&c.ID, &c.TrapID, &c.Type, &c.ExpectedProfileID, &c.ExpectedRevision, &c.TargetProfileID, &c.TargetRevision, &c.Status, &expires, &created); err != nil {
+			fail(w, r, 503, "not_ready", "commands unavailable", nil)
+			return
+		}
+		c.ExpiresAt, c.CreatedAt = expires.UTC().Format(time.RFC3339Nano), created.UTC().Format(time.RFC3339Nano)
+		commands = append(commands, c)
+		ids = append(ids, c.ID)
+	}
+	if err = rows.Err(); err != nil {
+		fail(w, r, 503, "not_ready", "commands unavailable", nil)
+		return
+	}
+	for _, commandID := range ids {
+		if _, err = tx.Exec(ctx, `UPDATE commands SET status='delivered' WHERE id=$1 AND status='queued'`, commandID); err != nil {
+			fail(w, r, 503, "not_ready", "commands unavailable", nil)
+			return
+		}
+	}
+	_, _ = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID)
+	_, _ = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now() WHERE id=$1`, id)
+	if err = tx.Commit(ctx); err != nil {
+		fail(w, r, 503, "not_ready", "commands unavailable", nil)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": commands})
+}
+
+func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
+	id, commandID := r.PathValue("id"), r.PathValue("command_id")
+	token, ok := agentBearer(r)
+	if !ok || !contracts.ValidID(id) || !contracts.ValidID(commandID) {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+		Error  string `json:"error,omitempty"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Status != "applied" && req.Status != "failed" {
+		fail(w, r, 422, "validation_failed", "status must be applied or failed", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	defer tx.Rollback(context.Background())
+	var agentID string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1 AND token_hash=$2 AND revoked_at IS NULL`, id, tokenHash(token)).Scan(&agentID); err != nil {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	var commandType string
+	var targetProfile *string
+	var targetRevision *int
+	var currentStatus string
+	var expires time.Time
+	err = tx.QueryRow(ctx, `SELECT command_type,target_profile_id::text,target_revision,status,expires_at FROM commands WHERE id=$1 AND trap_id=$2 FOR UPDATE`, commandID, id).Scan(&commandType, &targetProfile, &targetRevision, &currentStatus, &expires)
+	if noRows(err) {
+		fail(w, r, 404, "not_found", "command not found", nil)
+		return
+	}
+	if err != nil {
+		fail(w, r, 503, "not_ready", "command unavailable", nil)
+		return
+	}
+	if currentStatus == "expired" || time.Now().After(expires) {
+		_, _ = tx.Exec(ctx, `UPDATE commands SET status='expired' WHERE id=$1`, commandID)
+		fail(w, r, 409, "command_expired", "command has expired", nil)
+		return
+	}
+	if currentStatus == "applied" || currentStatus == "failed" {
+		if err = tx.Commit(ctx); err != nil {
+			fail(w, r, 503, "not_ready", "command unavailable", nil)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"status": currentStatus})
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE commands SET status=$1 WHERE id=$2`, req.Status, commandID); err != nil {
+		fail(w, r, 503, "not_ready", "command unavailable", nil)
+		return
+	}
+	if req.Status == "applied" && commandType == "apply_profile" && targetProfile != nil && targetRevision != nil {
+		_, err = tx.Exec(ctx, `UPDATE traps SET applied_profile_id=$1,applied_revision=$2 WHERE id=$3`, *targetProfile, *targetRevision, id)
+	}
+	if err != nil {
+		fail(w, r, 503, "not_ready", "command state unavailable", nil)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		fail(w, r, 503, "not_ready", "command unavailable", nil)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"status": req.Status})
+}
+
+func agentBearer(r *http.Request) (string, bool) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		return "", false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	return token, token != "" && len(token) <= 128 && !strings.Contains(token, " ")
+}
+
 func (s *Server) queueCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !checkID(w, r, id) {
