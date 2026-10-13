@@ -1,0 +1,30 @@
+{
+  "name": "Demo admin",
+  "description": "Synthetic medium HTTP profile",
+  "config": {
+    "template_id": "medium-http",
+    "level": "medium",
+    "services": [
+      { "id": "web", "name": "Web admin", "protocol": "http", "port": 8080, "banner": "HoneyForge admin" }
+    ],
+    "visible_texts": {
+      "title": "Admin",
+      "login_prompt": "Sign in",
+      "success": "Welcome",
+      "failure": "Denied"
+    },
+    "synthetic_credentials": [
+      { "username": "demo", "password": "<redacted-example>" }
+    ],
+    "fake_fs": [
+      { "path": "reports/summary.txt", "content": "Synthetic report" }
+    ],
+    "logging": {
+      "categories": [
+        "http.request", "auth.attempt", "session.started", "file.listed",
+        "file.read", "file.downloaded", "session.ended"
+      ]
+    },
+    "channel": { "tls_required": true, "heartbeat_seconds": 10, "sync_seconds": 2 }
+  }
+}
