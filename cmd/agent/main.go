@@ -19,6 +19,7 @@ func main() {
 	trapID := flag.String("trap", "", "trap UUID (required only for first enrollment)")
 	enrollmentToken := flag.String("enrollment-token", "", "one-time enrollment token (required only for first enrollment)")
 	statePath := flag.String("state", defaultStatePath(), "private path for persistent agent credentials and config")
+	queuePath := flag.String("queue", defaultQueuePath(), "private SQLite path for pending telemetry")
 	flag.Parse()
 
 	if *centerURL == "" {
@@ -28,6 +29,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	queue, err := agent.OpenQueue(*queuePath, 10000)
+	if err != nil {
+		log.Fatalf("open event queue: %v", err)
+	}
+	defer queue.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -59,8 +65,11 @@ func main() {
 	}
 	syncTicker := time.NewTicker(2 * time.Second)
 	heartbeatTicker := time.NewTicker(5 * time.Second)
+	deliveryTicker := time.NewTicker(1 * time.Second)
 	defer syncTicker.Stop()
 	defer heartbeatTicker.Stop()
+	defer deliveryTicker.Stop()
+	var metrics agent.DeliveryMetrics
 	for {
 		select {
 		case <-ctx.Done():
@@ -77,6 +86,12 @@ func main() {
 			if err = sendHeartbeat(ctx, client, state); err != nil {
 				log.Printf("heartbeat failed: %v", err)
 			}
+		case <-deliveryTicker.C:
+			flushCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			if err = queue.Flush(flushCtx, client, state, 100, &metrics); err != nil {
+				log.Printf("telemetry delivery failed: %v", err)
+			}
+			cancel()
 		}
 	}
 }
@@ -107,4 +122,15 @@ func defaultStatePath() string {
 		return filepath.Join(".", "honeyforge-agent.json")
 	}
 	return filepath.Join(configDir, "honeyforge", "agent-state.json")
+}
+
+func defaultQueuePath() string {
+	if path := os.Getenv("HF_AGENT_QUEUE"); path != "" {
+		return path
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return filepath.Join(".", "honeyforge-agent.sqlite")
+	}
+	return filepath.Join(configDir, "honeyforge", "agent-events.sqlite")
 }

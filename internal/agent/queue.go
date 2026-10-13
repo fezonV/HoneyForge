@@ -55,7 +55,8 @@ func OpenQueue(path string, limit int) (*EventQueue, error) {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS queued_events (
 			agent_id TEXT NOT NULL, event_id TEXT NOT NULL, body BLOB NOT NULL,
 			body_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL, PRIMARY KEY(agent_id,event_id)
+			created_at TEXT NOT NULL, next_attempt_at TEXT NOT NULL DEFAULT '',
+			quarantine_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(agent_id,event_id)
 		);`)
 	}
 	if err != nil {
@@ -110,7 +111,7 @@ func (q *EventQueue) Batch(ctx context.Context, limit int) ([]QueuedEvent, error
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	rows, err := q.db.QueryContext(ctx, `SELECT body,attempts FROM queued_events ORDER BY created_at,agent_id,event_id LIMIT ?`, limit)
+	rows, err := q.db.QueryContext(ctx, `SELECT body,attempts FROM queued_events WHERE quarantine_reason='' AND (next_attempt_at='' OR next_attempt_at<=?) ORDER BY created_at,agent_id,event_id LIMIT ?`, time.Now().UTC().Format(time.RFC3339Nano), limit)
 	if err != nil {
 		return nil, fmt.Errorf("read event queue: %w", err)
 	}
@@ -143,11 +144,38 @@ func (q *EventQueue) MarkAttempted(ctx context.Context, events []QueuedEvent) er
 	}
 	defer tx.Rollback()
 	for _, item := range events {
-		if _, err = tx.ExecContext(ctx, `UPDATE queued_events SET attempts=attempts+1 WHERE agent_id=? AND event_id=?`, item.Event.AgentID, item.Event.EventID); err != nil {
+		attempt := item.Attempts + 1
+		backoff := ""
+		if attempt > 1 {
+			backoff = time.Now().UTC().Add(time.Duration(1<<min(attempt, 6)) * time.Second).Format(time.RFC3339Nano)
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE queued_events SET attempts=?,next_attempt_at=? WHERE agent_id=? AND event_id=?`, attempt, backoff, item.Event.AgentID, item.Event.EventID); err != nil {
 			return fmt.Errorf("mark event attempt: %w", err)
 		}
 	}
 	return tx.Commit()
+}
+
+func (q *EventQueue) Quarantine(ctx context.Context, events []QueuedEvent, reason string) error {
+	if reason == "" || len(reason) > 500 {
+		return errors.New("quarantine reason must contain 1 to 500 characters")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, item := range events {
+		if _, err := q.db.ExecContext(ctx, `UPDATE queued_events SET quarantine_reason=? WHERE agent_id=? AND event_id=?`, reason, item.Event.AgentID, item.Event.EventID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (q *EventQueue) Quarantined(ctx context.Context) (int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var count int
+	err := q.db.QueryRowContext(ctx, `SELECT count(*) FROM queued_events WHERE quarantine_reason<>''`).Scan(&count)
+	return count, err
 }
 
 func (q *EventQueue) Ack(ctx context.Context, events []contracts.Event) error {
@@ -174,4 +202,11 @@ func (q *EventQueue) Depth(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
