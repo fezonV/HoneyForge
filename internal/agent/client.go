@@ -21,6 +21,15 @@ import (
 
 const maxResponseBytes = 1 << 20
 
+type HTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("center returned HTTP %d: %s", e.StatusCode, e.Message)
+}
+
 // State contains the agent credential and last desired configuration. It must
 // only be written to a private path because AgentToken grants trap access.
 type State struct {
@@ -180,7 +189,7 @@ func (c *Client) doJSON(ctx context.Context, method, path, token string, input a
 		return errors.New("center response exceeds 1 MiB limit")
 	}
 	if resp.StatusCode != expectedStatus {
-		return fmt.Errorf("center returned HTTP %d: %s", resp.StatusCode, safeBody(data))
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Message: safeBody(data)}
 	}
 	if err = json.Unmarshal(data, output); err != nil {
 		return fmt.Errorf("decode center response: %w", err)

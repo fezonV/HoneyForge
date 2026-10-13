@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"honeyforge/internal/contracts"
@@ -29,6 +30,14 @@ func (q *EventQueue) Flush(ctx context.Context, client *Client, state *State, ba
 	}
 	result, err := client.SendEvents(ctx, state, events)
 	if err != nil {
+		var statusErr *HTTPStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode >= 400 && statusErr.StatusCode < 500 {
+			_ = q.Quarantine(ctx, items, statusErr.Error())
+			if metrics != nil {
+				metrics.Quarantined += uint64(len(items))
+			}
+			return err
+		}
 		_ = q.MarkAttempted(ctx, items)
 		if metrics != nil {
 			metrics.Retries++
