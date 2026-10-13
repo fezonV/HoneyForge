@@ -357,7 +357,16 @@ func TestControlPostgresFoundation(t *testing.T) {
 	if heartbeatRes.Code != 200 || !strings.Contains(heartbeatRes.Body.String(), `"agent_status":"online"`) || !strings.Contains(heartbeatRes.Body.String(), `"service_status":"running"`) {
 		t.Fatalf("agent heartbeat=%d %s", heartbeatRes.Code, heartbeatRes.Body.String())
 	}
-	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+	eventBody := fmt.Sprintf(`{"events":[{"schema_version":"1.0","event_id":"44444444-4444-4444-8444-444444444444","trap_id":%q,"agent_id":(SELECT id::text FROM agents WHERE trap_id=%q),"service_id":"web","event_type":"http.request","timestamp":"2026-10-13T00:00:00Z","protocol":"http","payload":{"path":"/"}}]}`, nt.ID, nt.ID)
+	eventsReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(eventBody))
+	eventsReq.Header.Set("Authorization", "Bearer "+agentToken)
+	eventsReq.Header.Set("Content-Type", "application/json")
+	eventsRes := httptest.NewRecorder()
+	h.ServeHTTP(eventsRes, eventsReq)
+	if eventsRes.Code != 422 {
+		t.Fatalf("invalid SQL-shaped event accepted=%d %s", eventsRes.Code, eventsRes.Body.String())
+	}
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE trap_id=$1`, nt.ID); err != nil {
 		t.Fatal("revoke heartbeat fixture", err)
 	}
 	revokedHeartbeatReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/heartbeat", strings.NewReader(`{"service_state":"running"}`))
@@ -368,7 +377,7 @@ func TestControlPostgresFoundation(t *testing.T) {
 	if revokedHeartbeatRes.Code != 401 {
 		t.Fatalf("revoked agent heartbeat=%d", revokedHeartbeatRes.Code)
 	}
-	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=NULL WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=NULL WHERE trap_id=$1`, nt.ID); err != nil {
 		t.Fatal("restore heartbeat fixture", err)
 	}
 	wrongBearer := httptest.NewRecorder()

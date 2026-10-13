@@ -55,6 +55,9 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 				t.Errorf("unexpected heartbeat body: %#v", request)
 			}
 			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","agent_status":"online","service_status":"running","last_seen":"2026-10-12T00:00:00Z"}`))
+		case "/agent/v1/traps/" + trapID + "/events":
+			gotAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"accepted_ids":["44444444-4444-4444-8444-444444444444"],"duplicate_ids":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -80,6 +83,11 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 	}
 	if gotAuth != "Bearer long-lived-secret" {
 		t.Fatalf("heartbeat auth = %q", gotAuth)
+	}
+	event := queueEvent("44444444-4444-4444-8444-444444444444")
+	result, err := client.SendEvents(context.Background(), state, []contracts.Event{event})
+	if err != nil || len(result.AcceptedIDs) != 1 || gotAuth != "Bearer long-lived-secret" {
+		t.Fatalf("SendEvents result=%+v auth=%q err=%v", result, gotAuth, err)
 	}
 }
 

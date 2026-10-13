@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -597,6 +598,101 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"trap_id": id, "agent_status": "online", "service_status": request.ServiceState, "last_seen": time.Now().UTC().Format(time.RFC3339Nano)})
+}
+
+func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !contracts.ValidID(id) {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if token == "" || len(token) > 128 || strings.Contains(token, " ") {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	var request struct {
+		Events []contracts.Event `json:"events"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	if len(request.Events) == 0 || len(request.Events) > 100 {
+		fail(w, r, 422, "validation_failed", "events must contain 1 to 100 items", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		fail(w, r, 503, "not_ready", "database unavailable", nil)
+		return
+	}
+	defer tx.Rollback(context.Background())
+	var agentID string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1 AND token_hash=$2 AND revoked_at IS NULL`, id, tokenHash(token)).Scan(&agentID); err != nil {
+		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
+		return
+	}
+	accepted := make([]string, 0, len(request.Events))
+	duplicates := make([]string, 0)
+	for _, event := range request.Events {
+		if !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID || event.ServiceID == "" || len(event.ServiceID) > 64 || event.EventType == "" || len(event.EventType) > 64 || event.Protocol == "" || len(event.Payload) > 64 {
+			fail(w, r, 422, "validation_failed", "event identity or fields are invalid", nil)
+			return
+		}
+		occurred, parseErr := time.Parse(time.RFC3339Nano, event.Timestamp)
+		if parseErr != nil {
+			fail(w, r, 422, "validation_failed", "event timestamp must be RFC3339", nil)
+			return
+		}
+		payload, marshalErr := json.Marshal(event.Payload)
+		if marshalErr != nil || len(payload) > 256*1024 {
+			fail(w, r, 422, "validation_failed", "event payload is invalid or too large", nil)
+			return
+		}
+		var inserted bool
+		err = tx.QueryRow(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT (agent_id,id) DO NOTHING RETURNING true`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&inserted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var existingType string
+			var existingPayload []byte
+			if err = tx.QueryRow(ctx, `SELECT event_type,payload FROM events WHERE agent_id=$1 AND id=$2`, agentID, event.EventID).Scan(&existingType, &existingPayload); err != nil {
+				fail(w, r, 503, "not_ready", "event identity could not be checked", nil)
+				return
+			}
+			if existingType != event.EventType || string(existingPayload) != string(payload) {
+				fail(w, r, 409, "event_conflict", "event ID already exists with different content", nil)
+				return
+			}
+			duplicates = append(duplicates, event.EventID)
+			continue
+		}
+		if err != nil {
+			fail(w, r, 503, "not_ready", "events could not be stored", nil)
+			return
+		}
+		if inserted {
+			accepted = append(accepted, event.EventID)
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID); err != nil {
+		fail(w, r, 503, "not_ready", "agent state could not be updated", nil)
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now() WHERE id=$1 AND deleted_at IS NULL`, id); err != nil {
+		fail(w, r, 503, "not_ready", "trap state could not be updated", nil)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		fail(w, r, 503, "not_ready", "events could not be committed", nil)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"accepted_ids": accepted, "duplicate_ids": duplicates})
 }
 
 func (s *Server) queueCommand(w http.ResponseWriter, r *http.Request) {

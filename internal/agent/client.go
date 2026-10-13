@@ -37,6 +37,11 @@ type ConfigResponse struct {
 	Config    contracts.ProfileConfig `json:"config"`
 }
 
+type EventSendResponse struct {
+	AcceptedIDs  []string `json:"accepted_ids"`
+	DuplicateIDs []string `json:"duplicate_ids"`
+}
+
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -100,6 +105,18 @@ func (c *Client) Heartbeat(ctx context.Context, state *State, serviceState strin
 		return errors.New("center returned an invalid heartbeat response")
 	}
 	return nil
+}
+
+func (c *Client) SendEvents(ctx context.Context, state *State, events []contracts.Event) (EventSendResponse, error) {
+	if state == nil || state.Token == "" || state.TrapID == "" {
+		return EventSendResponse{}, errors.New("agent state is missing its credential or trap ID")
+	}
+	if len(events) == 0 || len(events) > 100 {
+		return EventSendResponse{}, errors.New("event batch must contain 1 to 100 items")
+	}
+	var result EventSendResponse
+	err := c.doJSON(ctx, http.MethodPost, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/events", state.Token, map[string]any{"events": events}, http.StatusOK, &result)
+	return result, err
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path, token string, input any, expectedStatus int, output any) error {

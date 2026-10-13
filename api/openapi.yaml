@@ -394,6 +394,27 @@ paths:
               schema: { $ref: '#/components/schemas/AgentHeartbeatResponse' }
         '401': { $ref: '#/components/responses/ApiError' }
         '422': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/events:
+    post:
+      operationId: post_agent_v1_traps_by_id_events
+      summary: Submit a telemetry batch
+      tags: [Telemetry]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentEventBatch' }
+      responses:
+        '200':
+          description: Events committed; repeats are acknowledged as duplicates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentEventBatchResponse' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
   /api/v1/traps/{id}/commands:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:
@@ -743,6 +764,22 @@ components:
         agent_status: { type: string, enum: [online] }
         service_status: { type: string, enum: [unknown, running, stopped, degraded, error] }
         last_seen: { type: string, format: date-time }
+    AgentEventBatch:
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/Event' }
+    AgentEventBatchResponse:
+      type: object
+      required: [accepted_ids, duplicate_ids]
+      properties:
+        accepted_ids: { type: array, items: { type: string, format: uuid } }
+        duplicate_ids: { type: array, items: { type: string, format: uuid } }
     QueueCommandRequest:
       type: object
       additionalProperties: false
