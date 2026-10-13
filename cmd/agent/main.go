@@ -66,10 +66,13 @@ func main() {
 	syncTicker := time.NewTicker(2 * time.Second)
 	heartbeatTicker := time.NewTicker(5 * time.Second)
 	deliveryTicker := time.NewTicker(1 * time.Second)
+	commandTicker := time.NewTicker(2 * time.Second)
 	defer syncTicker.Stop()
 	defer heartbeatTicker.Stop()
 	defer deliveryTicker.Stop()
+	defer commandTicker.Stop()
 	var metrics agent.DeliveryMetrics
+	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -90,6 +93,12 @@ func main() {
 			flushCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 			if err = queue.Flush(flushCtx, client, state, 100, &metrics); err != nil {
 				log.Printf("telemetry delivery failed: %v", err)
+			}
+			cancel()
+		case <-commandTicker.C:
+			commandCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			if err = agent.ProcessCommands(commandCtx, client, state, adapter); err != nil {
+				log.Printf("command processing failed: %v", err)
 			}
 			cancel()
 		}
