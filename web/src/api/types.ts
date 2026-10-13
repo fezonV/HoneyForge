@@ -41,6 +41,53 @@ export interface Template {
   capabilities: string[];
 }
 
+export interface SyntheticCredential {
+  username: string;
+  password?: string;
+}
+
+export interface FakeFile {
+  path: string;
+  content: string;
+}
+
+export interface VisibleTexts {
+  title: string;
+  login_prompt: string;
+  success: string;
+  failure: string;
+}
+
+export interface LoggingConfig {
+  categories: string[];
+}
+
+export interface ChannelConfig {
+  tls_required: boolean;
+  heartbeat_seconds: number;
+  sync_seconds: number;
+}
+
+export interface ProfileConfig {
+  template_id: string;
+  level: string;
+  services: ServiceConfig[];
+  visible_texts: VisibleTexts;
+  synthetic_credentials: SyntheticCredential[];
+  fake_fs: FakeFile[];
+  logging: LoggingConfig;
+  channel: ChannelConfig;
+}
+
+export interface ProfileRevision {
+  profile_id: string;
+  revision: number;
+  config: ProfileConfig;
+  created_at: string;
+  created_by: string;
+  sensitive_redacted: boolean;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -49,9 +96,36 @@ export interface Profile {
   revision: number;
   services: ServiceConfig[];
   masking: MaskingConfig;
+  config?: ProfileConfig;
   created_at: string;
   updated_at: string;
   traps_count?: number;
+}
+
+export interface CreateProfileRequest {
+  name: string;
+  description: string;
+  config: ProfileConfig;
+}
+
+export interface PreviewDocument {
+  id: string;
+  title: string;
+  section: string;
+  path: string;
+  date: string;
+  body: string;
+}
+
+export interface PreviewModel {
+  organization: string;
+  service: string;
+  title: string;
+  description: string;
+  sections: string[];
+  documents: PreviewDocument[];
+  state: string;
+  selectedDocumentId?: string;
 }
 
 export interface DeploymentBinding {

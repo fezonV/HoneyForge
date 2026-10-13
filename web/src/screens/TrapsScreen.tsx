@@ -63,6 +63,30 @@ export const TrapsScreen: React.FC = () => {
 
   useEffect(() => {
     fetchTraps();
+
+    const storedProfileId = sessionStorage.getItem('hf_deploy_profile_id');
+    const storedProfileName = sessionStorage.getItem('hf_deploy_profile_name');
+    if (storedProfileId) {
+      setNewTrapProfileId(storedProfileId);
+      if (storedProfileName) {
+        setNewTrapName(`${storedProfileName} Instance`);
+      }
+      setIsCreateOpen(true);
+      sessionStorage.removeItem('hf_deploy_profile_id');
+      sessionStorage.removeItem('hf_deploy_profile_name');
+    }
+
+    const handleDeployEvent = (e: any) => {
+      const p = e.detail;
+      if (p?.profileId) {
+        setNewTrapProfileId(p.profileId);
+        setNewTrapName(p.profileName ? `${p.profileName} Instance` : 'New Trap Instance');
+        setIsCreateOpen(true);
+      }
+    };
+
+    window.addEventListener('honeyforge-deploy-profile', handleDeployEvent);
+    return () => window.removeEventListener('honeyforge-deploy-profile', handleDeployEvent);
   }, [fetchTraps]);
 
   const handleCreateTrap = async (e: React.FormEvent) => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Server, Lock } from 'lucide-react';
-import { Profile, InteractionLevel } from '../api/types';
+import { Plus, Trash2, Server, Lock, Eye, Rocket, RefreshCw, Sliders } from 'lucide-react';
+import { Profile } from '../api/types';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -8,6 +8,9 @@ import { LevelBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
 import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/StateViews';
+import { ProfileWizardModal } from '../components/profiles/ProfileWizardModal';
+import { ProfileDecoyPreview } from '../components/profiles/ProfileDecoyPreview';
+import { profileToPreviewModel } from '../utils/previewAdapter';
 
 export const ProfilesScreen: React.FC = () => {
   const { role } = useAuth();
@@ -16,16 +19,12 @@ export const ProfilesScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal State
-  const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [newName, setNewName] = useState<string>('');
-  const [newDesc, setNewDesc] = useState<string>('');
-  const [newLevel, setNewLevel] = useState<InteractionLevel>('low');
-  const [newPort, setNewPort] = useState<number>(80);
-  const [newBanner, setNewBanner] = useState<string>('nginx/1.24.0');
-  const [newDecoyPath, setNewDecoyPath] = useState<string>('/static/assets/bundle.js');
-  const [newProcessName, setNewProcessName] = useState<string>('systemd-timesyncd');
+  // Profile Wizard Modal State
+  const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
+
+  // View Existing Profile Modal State
+  const [inspectProfile, setInspectProfile] = useState<Profile | null>(null);
+  const [inspectTab, setInspectTab] = useState<'preview' | 'config'>('preview');
 
   const fetchProfiles = useCallback(async () => {
     setIsLoading(true);
@@ -44,296 +43,297 @@ export const ProfilesScreen: React.FC = () => {
     fetchProfiles();
   }, [fetchProfiles]);
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim()) return;
-
-    setIsSubmitting(true);
-    try {
-      const created = await api.profiles.create({
-        name: newName.trim(),
-        description: newDesc.trim() || 'Без описания',
-        level: newLevel,
-        services: [
-          {
-            name: `${newName.trim()} Service`,
-            port: Number(newPort),
-            protocol: 'http',
-            banner: newBanner.trim(),
-          },
-        ],
-        masking: {
-          jitter_enabled: true,
-          min_jitter_sec: 2,
-          max_jitter_sec: 10,
-          decoy_path: newDecoyPath.trim(),
-          hidden_service_name: newProcessName.trim(),
-        },
-      });
-
-      notify('success', 'Профиль создан', `Профиль "${created.name}" успешно добавлен в реестр`);
-      setIsCreateOpen(false);
-      resetForm();
-      fetchProfiles();
-    } catch (err: any) {
-      notify('error', 'Ошибка создания профиля', err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`Удалить профиль "${name}"?`)) return;
+    if (!window.confirm(`Удалить профиль "${name}"? Все ловушки с этим профилем потребуют переназначения.`)) {
+      return;
+    }
 
     try {
       await api.profiles.delete(id);
-      notify('success', 'Профиль удален', `Профиль "${name}" удален`);
+      notify('success', 'Профиль удалён', `Профиль "${name}" успешно удалён из реестра`);
       fetchProfiles();
     } catch (err: any) {
       notify('error', 'Не удалось удалить профиль', err.message);
     }
   };
 
-  const resetForm = () => {
-    setNewName('');
-    setNewDesc('');
-    setNewLevel('low');
-    setNewPort(80);
-    setNewBanner('nginx/1.24.0');
-    setNewDecoyPath('/static/assets/bundle.js');
-    setNewProcessName('systemd-timesyncd');
+  const handleDeployInstance = (prof: Profile) => {
+    sessionStorage.setItem('hf_deploy_profile_id', prof.id);
+    sessionStorage.setItem('hf_deploy_profile_name', prof.name);
+    window.dispatchEvent(
+      new CustomEvent('honeyforge-deploy-profile', {
+        detail: { profileId: prof.id, profileName: prof.name, revision: prof.revision },
+      })
+    );
+    window.location.hash = 'traps';
+    notify('info', 'Переход к развёртыванию', `Создание ловушки с профилем "${prof.name}" (rev ${prof.revision})`);
   };
 
   const isViewer = role === 'viewer';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header */}
+      {/* Title & Actions Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Профили ловушек</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Реестр профилей ловушек</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Шаблоны конфигурации сервисов, портов, баннеров и параметров маскировки (FR-C1)
+            Конструктор поведения приманок (Low/Medium), управление версиями и безопасный предпросмотр (FR-C1)
           </p>
         </div>
 
-        <div>
-          {isViewer ? (
-            <div className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 rounded-lg text-sm border border-slate-200 cursor-not-allowed">
-              <Lock className="w-4 h-4" />
-              <span>Создание профилей недоступно (Viewer)</span>
-            </div>
-          ) : (
+        <div className="flex items-center gap-2.5">
+          {!isViewer && (
             <Button
               variant="primary"
-              size="md"
+              size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsCreateOpen(true)}
+              onClick={() => setIsWizardOpen(true)}
             >
-              Создать профиль
+              Конструктор профиля (Мастер)
             </Button>
           )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
+            onClick={fetchProfiles}
+            disabled={isLoading}
+          >
+            Обновить
+          </Button>
         </div>
       </div>
 
+      {/* Profiles Grid */}
       {isLoading ? (
         <LoadingSkeleton rows={4} />
       ) : error ? (
         <ErrorState message={error} onRetry={fetchProfiles} />
       ) : profiles.length === 0 ? (
         <EmptyState
-          title="Профили не найдены"
-          description="Создайте первый профиль для привязки к honeypot-ловушкам"
-          actionText={isViewer ? undefined : 'Создать профиль'}
-          onAction={isViewer ? undefined : () => setIsCreateOpen(true)}
+          title="Профили не созданы"
+          description="Создайте первый профиль поведения с помощью мастера для настройки парка ловушек"
+          actionText={!isViewer ? 'Запустить конструктор профилей' : undefined}
+          onAction={() => setIsWizardOpen(true)}
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {profiles.map((prof) => (
-            <div
-              key={prof.id}
-              className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col justify-between hover:border-slate-300 transition-colors"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <h3 className="font-bold text-slate-900 text-base">{prof.name}</h3>
-                  <LevelBadge level={prof.level} />
-                </div>
-                <p className="text-xs text-slate-500 min-h-[36px] line-clamp-2">{prof.description}</p>
+          {profiles.map((prof) => {
+            return (
+              <div
+                key={prof.id}
+                className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs hover:shadow-md transition-shadow flex flex-col justify-between"
+              >
+                <div>
+                  {/* Card Header */}
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <span className="font-mono text-[11px] text-slate-400">
+                      rev {prof.revision} · {prof.id.substring(0, 8)}...
+                    </span>
+                    <LevelBadge level={prof.level} />
+                  </div>
 
-                {/* Services list */}
-                <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
-                    Сервисы и порты:
-                  </span>
-                  {prof.services.map((srv, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Server className="w-3.5 h-3.5 text-slate-400" />
-                        <span className="font-medium text-slate-800">{srv.name}</span>
-                      </div>
-                      <span className="font-mono bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-700">
-                        {srv.port}/{srv.protocol}
+                  <h3 className="font-bold text-slate-900 text-base leading-snug line-clamp-2">
+                    {prof.name}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                    {prof.description || 'Без описания'}
+                  </p>
+
+                  {/* Services summary */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-2 text-xs">
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <Server className="w-3.5 h-3.5 text-slate-400" /> Сервисы:
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-slate-800">
+                        {prof.services.map((s) => `:${s.port}`).join(', ')}
                       </span>
                     </div>
-                  ))}
-                </div>
 
-                {/* Masking features */}
-                <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5 text-xs">
-                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
-                    Маскировка канала:
-                  </span>
-                  <div className="flex justify-between text-slate-600">
-                    <span>Decoy-путь:</span>
-                    <span className="font-mono text-[11px] text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {prof.masking.decoy_path}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>Имя процесса:</span>
-                    <span className="font-mono text-[11px] text-slate-800">
-                      {prof.masking.hidden_service_name}
-                    </span>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span>Маскировка:</span>
+                      <span className="text-[11px] text-slate-700 font-mono">
+                        {prof.masking?.hidden_service_name || 'дефолтная'}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Card Footer */}
-              <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex flex-col text-xs text-slate-400 font-mono">
-                  <span>Ревизия: rev {prof.revision}</span>
-                  <span className="text-[10px] text-slate-400">
-                    {prof.updated_at ? new Date(prof.updated_at).toUTCString().replace('GMT', 'UTC') : 'UTC'}
-                  </span>
+                {/* Card Footer Actions */}
+                <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setInspectProfile(prof)}
+                      className="px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors inline-flex items-center gap-1"
+                      title="Предпросмотр приманки и параметров"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> Предпросмотр
+                    </button>
+
+                    {!isViewer && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeployInstance(prof)}
+                        className="px-2.5 py-1 text-xs font-medium text-brand-700 hover:text-brand-900 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-md transition-colors inline-flex items-center gap-1"
+                        title="Создать экземпляр ловушки с этим профилем (FE2-01)"
+                      >
+                        <Rocket className="w-3.5 h-3.5" /> Экземпляр
+                      </button>
+                    )}
+                  </div>
+
+                  {!isViewer && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(prof.id, prof.name)}
+                      className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                      title="Удалить профиль"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
-
-                {!isViewer && (
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(prof.id, prof.name)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                    title="Удалить профиль"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Create Profile Modal */}
-      <Modal
-        isOpen={isCreateOpen}
-        onClose={() => setIsCreateOpen(false)}
-        title="Создание профиля ловушки"
-        description="Задайте параметры сервисов и маскировки канала связи с центром"
-        maxWidth="lg"
-      >
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Название профиля</label>
-            <input
-              type="text"
-              required
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Например: Fake SSH Ubuntu 22.04"
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none"
-            />
-          </div>
+      {/* Profile Wizard Modal (FE-02) */}
+      <ProfileWizardModal
+        isOpen={isWizardOpen}
+        onClose={() => setIsWizardOpen(false)}
+        onProfileCreated={() => {
+          fetchProfiles();
+        }}
+        onDeployInstance={(created) => {
+          handleDeployInstance(created);
+        }}
+      />
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Описание назначения</label>
-            <textarea
-              rows={2}
-              value={newDesc}
-              onChange={(e) => setNewDesc(e.target.value)}
-              placeholder="Краткое описание эмулируемой среды и задачи ловушки..."
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none"
-            />
-          </div>
+      {/* Inspect Profile & Live Decoy Preview Modal */}
+      {inspectProfile && (
+        <Modal
+          isOpen={!!inspectProfile}
+          onClose={() => setInspectProfile(null)}
+          title={`Профиль: ${inspectProfile.name} (rev ${inspectProfile.revision})`}
+          description="Безопасный предпросмотр веб-интерфейса и сводка параметров конфигурации"
+          maxWidth="xl"
+        >
+          <div className="space-y-4">
+            {/* Header Tabs */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInspectTab('preview')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
+                    inspectTab === 'preview'
+                      ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-500/20'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" /> Предпросмотр TL-01
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectTab('config')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
+                    inspectTab === 'config'
+                      ? 'bg-brand-50 text-brand-700 ring-1 ring-brand-500/20'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" /> Параметры конфигурации
+                </button>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Уровень взаимодействия</label>
-              <select
-                value={newLevel}
-                onChange={(e) => setNewLevel(e.target.value as InteractionLevel)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none"
-              >
-                <option value="low">Low (только порты/баннеры)</option>
-                <option value="medium">Medium (логика fake-сервиса)</option>
-              </select>
+              {isViewer && (
+                <span className="text-[11px] text-slate-500 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
+                  <Lock className="w-3 h-3" /> Пароли скрыты сервером (Redacted)
+                </span>
+              )}
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Порт сервиса</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                required
-                value={newPort}
-                onChange={(e) => setNewPort(Number(e.target.value))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none"
-              >
-              </input>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Эмулируемый баннер сервиса</label>
-            <input
-              type="text"
-              value={newBanner}
-              onChange={(e) => setNewBanner(e.target.value)}
-              placeholder="SSH-2.0-OpenSSH_8.9p1 Ubuntu..."
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-brand-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="pt-2 border-t border-slate-200">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">
-              Параметры маскировки связи (Раздел 9 ТЗ)
-            </h4>
-            <div className="grid grid-cols-2 gap-4">
+            {inspectTab === 'preview' ? (
               <div>
-                <label className="block text-xs text-slate-600 mb-1">Decoy URL путь (приём телеметрии)</label>
-                <input
-                  type="text"
-                  value={newDecoyPath}
-                  onChange={(e) => setNewDecoyPath(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono"
+                <ProfileDecoyPreview
+                  model={profileToPreviewModel(
+                    inspectProfile.config || {
+                      template_id: inspectProfile.level === 'medium' ? 'medium-http' : 'low-http',
+                      level: inspectProfile.level,
+                      services: inspectProfile.services,
+                      visible_texts: {
+                        title: inspectProfile.name,
+                        login_prompt: inspectProfile.description,
+                        success: 'Доступ разрешён',
+                        failure: 'Неверные данные',
+                      },
+                      synthetic_credentials: [],
+                      fake_fs: [],
+                      logging: { categories: ['connection.opened', 'http.request'] },
+                      channel: { tls_required: true, heartbeat_seconds: 15, sync_seconds: 30 },
+                    },
+                    inspectProfile.name
+                  )}
+                  level={inspectProfile.level as 'low' | 'medium'}
                 />
               </div>
-              <div>
-                <label className="block text-xs text-slate-600 mb-1">Маскировка имени процесса</label>
-                <input
-                  type="text"
-                  value={newProcessName}
-                  onChange={(e) => setNewProcessName(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono"
-                />
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                  <div>
+                    <span className="text-slate-500">ID профиля:</span>
+                    <span className="font-mono text-slate-800 ml-1 font-semibold">{inspectProfile.id}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Ревизия:</span>
+                    <span className="font-bold text-brand-700 ml-1">v{inspectProfile.revision}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Уровень:</span>
+                    <span className="font-medium text-slate-800 ml-1 uppercase">{inspectProfile.level}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Создан (UTC):</span>
+                    <span className="font-mono text-slate-800 ml-1">
+                      {inspectProfile.created_at ? new Date(inspectProfile.created_at).toUTCString().replace('GMT', 'UTC') : '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs font-mono max-h-60 overflow-y-auto">
+                  <pre>{JSON.stringify(inspectProfile.config || inspectProfile, null, 2)}</pre>
+                </div>
               </div>
+            )}
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              {!isViewer && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leftIcon={<Rocket className="w-3.5 h-3.5" />}
+                  onClick={() => {
+                    const prof = inspectProfile;
+                    setInspectProfile(null);
+                    handleDeployInstance(prof);
+                  }}
+                >
+                  Создать экземпляр ловушки из профиля
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setInspectProfile(null)}>
+                Закрыть
+              </Button>
             </div>
           </div>
-
-          <div className="pt-4 flex justify-end gap-2.5">
-            <Button type="button" variant="outline" size="sm" onClick={() => setIsCreateOpen(false)}>
-              Отмена
-            </Button>
-            <Button type="submit" variant="primary" size="sm" isLoading={isSubmitting}>
-              Сохранить профиль
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 };

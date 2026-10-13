@@ -10,6 +10,11 @@ import {
   Page,
   BackendApiErrorResponse,
   DeploymentBinding,
+  InteractionLevel,
+  ServiceConfig,
+  MaskingConfig,
+  ProfileConfig,
+  ProfileRevision,
 } from './types';
 import {
   FIXTURE_OPERATOR,
@@ -338,13 +343,63 @@ export const api = {
       }));
     },
 
-    async create(data: Omit<Profile, 'id' | 'created_at' | 'updated_at' | 'revision'>): Promise<Profile> {
+    async create(data: {
+      name: string;
+      description?: string;
+      level?: InteractionLevel;
+      services?: ServiceConfig[];
+      masking?: MaskingConfig;
+      config?: ProfileConfig;
+    }): Promise<Profile> {
+      const cfg: ProfileConfig = data.config || {
+        template_id: data.level === 'medium' ? 'medium-http' : 'low-http',
+        level: data.level || 'low',
+        services: (data.services || []).map((s, idx) => ({
+          id: s.id || `svc-${idx + 1}`,
+          name: s.name,
+          protocol: 'http',
+          port: s.port,
+          banner: s.banner || 'HoneyForge Decoy',
+        })),
+        visible_texts: {
+          title: data.name,
+          login_prompt: 'Авторизация в закрытом архиве',
+          success: 'Доступ разрешен',
+          failure: 'Неверные учетные данные',
+        },
+        synthetic_credentials: data.level === 'medium' ? [
+          { username: 'admin', password: 'AdminPassword2026!' },
+        ] : [],
+        fake_fs: [],
+        logging: {
+          categories: data.level === 'medium'
+            ? ['auth.attempt', 'session.started', 'file.read', 'http.request', 'connection.opened']
+            : ['http.request', 'connection.opened'],
+        },
+        channel: {
+          tls_required: true,
+          heartbeat_seconds: 15,
+          sync_seconds: 30,
+        },
+      };
+
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 300));
         const newProf: Profile = {
-          ...data,
-          id: `prof-${Date.now().toString(36)}`,
+          id: `a1b2c3d4-e5f6-4a1b-8c2d-${Date.now().toString(16).padStart(12, '0')}`.slice(0, 36),
+          name: data.name,
+          description: data.description || 'Decoy profile',
+          level: cfg.level as InteractionLevel,
           revision: 1,
+          services: cfg.services,
+          masking: data.masking || {
+            jitter_enabled: true,
+            min_jitter_sec: 2,
+            max_jitter_sec: 8,
+            decoy_path: '/static/bundle.js',
+            hidden_service_name: 'systemd-timesyncd-worker',
+          },
+          config: cfg,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           traps_count: 0,
@@ -357,37 +412,7 @@ export const api = {
       const body = {
         name: data.name,
         description: data.description || 'Decoy profile',
-        config: {
-          template_id: data.level === 'medium' ? 'medium-http' : 'low-http',
-          level: data.level,
-          services: data.services.map((s, idx) => ({
-            id: s.id || `svc-${idx + 1}`,
-            name: s.name,
-            protocol: 'http',
-            port: s.port,
-            banner: s.banner || 'HoneyForge Decoy',
-          })),
-          visible_texts: {
-            title: data.name,
-            login_prompt: 'Авторизация в закрытом архиве',
-            success: 'Доступ разрешен',
-            failure: 'Неверные учетные данные',
-          },
-          synthetic_credentials: data.level === 'medium' ? [
-            { username: 'admin', password: 'AdminPassword2026!' },
-          ] : [],
-          fake_fs: [],
-          logging: {
-            categories: data.level === 'medium'
-              ? ['auth.attempt', 'session.started', 'file.read', 'http.request', 'connection.opened']
-              : ['http.request', 'connection.opened'],
-          },
-          channel: {
-            tls_required: false,
-            heartbeat_seconds: 15,
-            sync_seconds: 30,
-          },
-        },
+        config: cfg,
       };
 
       const res = await request<any>('/api/v1/profiles', {
@@ -397,12 +422,56 @@ export const api = {
 
       const prof = res.profile || res;
       return {
-        ...data,
         id: prof.id || res.id,
+        name: prof.name,
+        description: prof.description || '',
+        level: (cfg.level || prof.level || 'low') as InteractionLevel,
         revision: res.revision?.revision || prof.current_revision || 1,
+        services: cfg.services,
+        masking: data.masking || {
+          jitter_enabled: true,
+          min_jitter_sec: 2,
+          max_jitter_sec: 8,
+          decoy_path: '/static/bundle.js',
+          hidden_service_name: 'systemd-timesyncd-worker',
+        },
+        config: cfg,
         created_at: prof.created_at || new Date().toISOString(),
         updated_at: prof.updated_at || new Date().toISOString(),
         traps_count: 0,
+      };
+    },
+
+    async get(id: string): Promise<{ profile: Profile; revision?: ProfileRevision }> {
+      if (isDevModeActive()) {
+        await new Promise((r) => setTimeout(r, 150));
+        const found = mockProfiles.find((p) => p.id === id);
+        if (!found) throw new ApiRequestError('Профиль не найден', 404, 'not_found');
+        return { profile: found };
+      }
+
+      const res = await request<any>(`/api/v1/profiles/${encodeURIComponent(id)}`);
+      const prof = res.profile || res;
+      return {
+        profile: {
+          id: prof.id,
+          name: prof.name,
+          description: prof.description || '',
+          level: prof.level || 'low',
+          revision: prof.current_revision || 1,
+          services: res.revision?.config?.services || [],
+          masking: {
+            jitter_enabled: true,
+            min_jitter_sec: 2,
+            max_jitter_sec: 8,
+            decoy_path: '/static/bundle.js',
+            hidden_service_name: 'systemd-timesyncd-worker',
+          },
+          config: res.revision?.config,
+          created_at: prof.created_at,
+          updated_at: prof.updated_at,
+        },
+        revision: res.revision,
       };
     },
 
