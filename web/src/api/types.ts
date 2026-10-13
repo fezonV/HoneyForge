@@ -108,25 +108,6 @@ export interface CreateProfileRequest {
   config: ProfileConfig;
 }
 
-export interface PreviewDocument {
-  id: string;
-  title: string;
-  section: string;
-  path: string;
-  date: string;
-  body: string;
-}
-
-export interface PreviewModel {
-  organization: string;
-  service: string;
-  title: string;
-  description: string;
-  sections: string[];
-  documents: PreviewDocument[];
-  state: string;
-  selectedDocumentId?: string;
-}
 
 export interface DeploymentBinding {
   service_id: string;

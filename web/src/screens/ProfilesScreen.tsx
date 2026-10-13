@@ -9,8 +9,7 @@ import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
 import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/StateViews';
 import { ProfileWizardModal } from '../components/profiles/ProfileWizardModal';
-import { ProfileDecoyPreview } from '../components/profiles/ProfileDecoyPreview';
-import { profileToPreviewModel } from '../utils/previewAdapter';
+import { DecoyPreviewStub } from '../components/profiles/wizard/DecoyPreviewStub';
 
 export const ProfilesScreen: React.FC = () => {
   const { role } = useAuth();
@@ -260,29 +259,26 @@ export const ProfilesScreen: React.FC = () => {
             </div>
 
             {inspectTab === 'preview' ? (
-              <div>
-                <ProfileDecoyPreview
-                  model={profileToPreviewModel(
-                    inspectProfile.config || {
-                      template_id: inspectProfile.level === 'medium' ? 'medium-http' : 'low-http',
-                      level: inspectProfile.level,
-                      services: inspectProfile.services,
-                      visible_texts: {
-                        title: inspectProfile.name,
-                        login_prompt: inspectProfile.description,
-                        success: 'Доступ разрешён',
-                        failure: 'Неверные данные',
-                      },
-                      synthetic_credentials: [],
-                      fake_fs: [],
-                      logging: { categories: ['connection.opened', 'http.request'] },
-                      channel: { tls_required: true, heartbeat_seconds: 15, sync_seconds: 30 },
+              <DecoyPreviewStub
+                name={inspectProfile.name}
+                config={
+                  inspectProfile.config || {
+                    template_id: inspectProfile.level === 'medium' ? 'medium-http' : 'low-http',
+                    level: inspectProfile.level,
+                    services: inspectProfile.services,
+                    visible_texts: {
+                      title: inspectProfile.name,
+                      login_prompt: inspectProfile.description,
+                      success: 'Доступ разрешён',
+                      failure: 'Неверные данные',
                     },
-                    inspectProfile.name
-                  )}
-                  level={inspectProfile.level as 'low' | 'medium'}
-                />
-              </div>
+                    synthetic_credentials: [],
+                    fake_fs: [],
+                    logging: { categories: ['connection.opened', 'http.request'] },
+                    channel: { tls_required: true, heartbeat_seconds: 15, sync_seconds: 30 },
+                  }
+                }
+              />
             ) : (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-3.5 rounded-lg border border-slate-200">

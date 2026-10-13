@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Eye, Code, AlertTriangle } from 'lucide-react';
 import { ProfileConfig, CreateProfileRequest } from '../../../api/types';
-import { ProfileDecoyPreview } from '../ProfileDecoyPreview';
-import { profileToPreviewModel } from '../../../utils/previewAdapter';
+import { DecoyPreviewStub } from './DecoyPreviewStub';
 
 interface Step5Props {
   name: string;
@@ -19,7 +18,6 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'json'>('preview');
 
-  const previewModel = profileToPreviewModel(config, name);
   const isMedium = config.level === 'medium';
 
   const fullPayload: CreateProfileRequest = {
@@ -36,7 +34,7 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
         <div>
           <h2 className="text-base font-bold text-slate-900">Шаг 5: Проверка конфигурации и предпросмотр</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Убедитесь в корректности настроек и проверьте внешний вид приманки перед сохранением
+            Убедитесь в корректности настроек параметров профиля перед сохранением
           </p>
         </div>
 
@@ -51,7 +49,7 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Eye className="w-3.5 h-3.5" /> Предпросмотр (TL-01)
+            <Eye className="w-3.5 h-3.5" /> Предпросмотр (заглушка)
           </button>
           <button
             type="button"
@@ -117,9 +115,7 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
 
       {/* Main Tab Content */}
       {activeTab === 'preview' ? (
-        <div className="space-y-3">
-          <ProfileDecoyPreview model={previewModel} level={config.level as 'low' | 'medium'} />
-        </div>
+        <DecoyPreviewStub name={name} config={config} />
       ) : (
         <div className="space-y-2">
           <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 text-xs font-mono overflow-x-auto max-h-[500px] leading-relaxed">
