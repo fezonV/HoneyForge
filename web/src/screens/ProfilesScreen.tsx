@@ -9,7 +9,7 @@ import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
 import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/StateViews';
 import { ProfileWizardModal } from '../components/profiles/ProfileWizardModal';
-import { DecoyPreviewStub } from '../components/profiles/wizard/DecoyPreviewStub';
+import { DecoyPreviewFrame } from '../components/profiles/preview/DecoyPreviewFrame';
 
 export const ProfilesScreen: React.FC = () => {
   const { role } = useAuth();
@@ -260,7 +260,7 @@ export const ProfilesScreen: React.FC = () => {
             </div>
 
             {inspectTab === 'preview' ? (
-              <DecoyPreviewStub
+              <DecoyPreviewFrame
                 name={inspectProfile.name}
                 config={
                   inspectProfile.config || {
