@@ -18,6 +18,20 @@ import (
 // access to configuration, commands, or the center API.
 func IPCHandler(queue *EventQueue, state *State, token string) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		status, err := queue.TelemetryStatus(r.Context())
+		if err != nil {
+			http.Error(w, "telemetry status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status)
+	})
 	mux.HandleFunc("POST /v1/events", func(w http.ResponseWriter, r *http.Request) {
 		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if token == "" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {

@@ -10,10 +10,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"honeyforge/internal/agent"
+	"honeyforge/internal/contracts"
 )
 
 func main() {
@@ -108,18 +110,6 @@ func main() {
 		}()
 	}
 
-	if err = syncConfig(ctx, client, state, *statePath); err != nil {
-		log.Printf("initial configuration sync failed: %v", err)
-	}
-	syncTicker := time.NewTicker(2 * time.Second)
-	heartbeatTicker := time.NewTicker(5 * time.Second)
-	deliveryTicker := time.NewTicker(1 * time.Second)
-	commandTicker := time.NewTicker(2 * time.Second)
-	defer syncTicker.Stop()
-	defer heartbeatTicker.Stop()
-	defer deliveryTicker.Stop()
-	defer commandTicker.Stop()
-	var metrics agent.DeliveryMetrics
 	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
 	if *decoyURL != "" {
 		if *decoyToken == "" {
@@ -133,44 +123,61 @@ func main() {
 			log.Printf("decoy commands are enabled but the event IPC token is missing")
 		}
 	}
-	if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
-		log.Printf("initial heartbeat failed: %v", err)
+	runAgentLoops(ctx, client, state, *statePath, queue, adapter)
+}
+
+// Network stalls in one lane must not suppress heartbeats or local intake.
+// Commands stay sequential within their lane and use a durable result journal.
+func runAgentLoops(ctx context.Context, client *agent.Client, state *agent.State, statePath string, queue *agent.EventQueue, adapter agent.DecoyAdapter) {
+	var workers sync.WaitGroup
+	start := func(name string, interval func() time.Duration, action func(context.Context) error) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for ctx.Err() == nil {
+				if err := action(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("%s failed: %v", name, err)
+				}
+				timer := time.NewTimer(interval())
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}()
 	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-syncTicker.C:
-			if err = syncConfig(ctx, client, state, *statePath); err != nil {
-				log.Printf("configuration sync failed: %v", err)
-				continue
-			}
-			config := state.ConfigSnapshot()
-			if config == nil {
-				log.Printf("configuration sync returned no configuration")
-				continue
-			}
-			log.Printf("desired configuration is revision %d for trap %s", config.Revision, state.TrapID)
-			syncTicker.Reset(time.Duration(config.Config.Channel.SyncSeconds) * time.Second)
-			heartbeatTicker.Reset(time.Duration(config.Config.Channel.HeartbeatSeconds) * time.Second)
-		case <-heartbeatTicker.C:
-			if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
-				log.Printf("heartbeat failed: %v", err)
-			}
-		case <-deliveryTicker.C:
-			flushCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			if err = queue.Flush(flushCtx, client, state, 100, &metrics); err != nil {
-				log.Printf("telemetry delivery failed: %v", err)
-			}
-			cancel()
-		case <-commandTicker.C:
-			commandCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			if err = agent.ProcessCommands(commandCtx, client, state, adapter); err != nil {
-				log.Printf("command processing failed: %v", err)
-			}
-			cancel()
+	start("heartbeat", func() time.Duration {
+		if cfg := state.ConfigSnapshot(); cfg != nil && cfg.Config.Channel.HeartbeatSeconds >= 5 {
+			return time.Duration(cfg.Config.Channel.HeartbeatSeconds) * time.Second
 		}
-	}
+		return 5 * time.Second
+	}, func(ctx context.Context) error { return sendHeartbeatWithQueue(ctx, client, state, adapter, queue) })
+	start("telemetry delivery", func() time.Duration { return time.Second }, func(ctx context.Context) error {
+		requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return queue.Flush(requestCtx, client, state, 100, nil)
+	})
+	var nextSync time.Time
+	start("configuration and command processing", func() time.Duration { return 2 * time.Second }, func(ctx context.Context) error {
+		if !time.Now().Before(nextSync) {
+			if err := syncConfig(ctx, client, state, statePath); err != nil {
+				log.Printf("configuration sync failed; keeping previous configuration: %v", err)
+				nextSync = time.Now().Add(2 * time.Second)
+			} else {
+				interval := 2 * time.Second
+				if cfg := state.ConfigSnapshot(); cfg != nil && cfg.Config.Channel.SyncSeconds >= 2 {
+					interval = time.Duration(cfg.Config.Channel.SyncSeconds) * time.Second
+				}
+				nextSync = time.Now().Add(interval)
+			}
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return agent.ProcessCommands(requestCtx, client, state, adapter, queue)
+	})
+	workers.Wait()
 }
 
 type configFetcher interface {
@@ -218,10 +225,27 @@ func readSecret(value, path string) (string, error) {
 	return secret, nil
 }
 
-func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter) error {
+func sendHeartbeatWithQueue(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter, queue *agent.EventQueue) error {
+	statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	serviceState := currentServiceState(statusCtx, adapter)
+	cancel()
+	var telemetry *contracts.AgentTelemetry
+	if queue != nil {
+		statusCtx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		status, err := queue.TelemetryStatus(statusCtx)
+		cancel()
+		if err != nil {
+			serviceState = "error"
+		} else {
+			telemetry = &status
+			if status.Degraded && serviceState == "running" {
+				serviceState = "degraded"
+			}
+		}
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return client.Heartbeat(requestCtx, state, currentServiceState(requestCtx, adapter))
+	return client.HeartbeatWithTelemetry(requestCtx, state, serviceState, telemetry)
 }
 
 func currentServiceState(ctx context.Context, adapter agent.DecoyAdapter) string {

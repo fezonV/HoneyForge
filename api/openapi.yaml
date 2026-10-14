@@ -851,6 +851,7 @@ components:
         applied_profile_id: { type: [string, 'null'], format: uuid }
         applied_revision: { type: [integer, 'null'] }
         agent_status: { type: string, enum: [online, offline] }
+        telemetry: { $ref: '#/components/schemas/AgentTelemetry' }
         service_status: { type: string, enum: [unknown, running, stopped, degraded, error] }
         last_seen: { type: [string, 'null'], format: date-time }
         deployment_bindings: { type: array, items: { $ref: '#/components/schemas/DeploymentBinding' } }
@@ -919,6 +920,24 @@ components:
       additionalProperties: false
       properties:
         service_state: { type: string, enum: [unknown, running, stopped, degraded, error], default: unknown }
+        telemetry: { $ref: '#/components/schemas/AgentTelemetry' }
+    AgentTelemetry:
+      type: object
+      additionalProperties: false
+      required: [queue_depth, queue_limit, quarantined, sent_events, delivery_errors, delivery_retries, storage_errors, degraded]
+      description: Queue counts are durable; counters cover the current agent process lifetime. No visitor payloads or tokens.
+      properties:
+        queue_depth: { type: integer, minimum: 0 }
+        queue_limit: { type: integer, minimum: 1 }
+        quarantined: { type: integer, minimum: 0 }
+        quarantine_reason: { type: string, maxLength: 500 }
+        sent_events: { type: integer, minimum: 0 }
+        delivery_errors: { type: integer, minimum: 0 }
+        delivery_retries: { type: integer, minimum: 0 }
+        storage_errors: { type: integer, minimum: 0 }
+        storage_error: { type: string, maxLength: 500 }
+        delivery_error: { type: string, maxLength: 500 }
+        degraded: { type: boolean }
     AgentHeartbeatResponse:
       type: object
       required: [trap_id, agent_status, service_status, last_seen]

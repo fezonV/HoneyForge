@@ -23,9 +23,11 @@ var ErrEventConflict = errors.New("event ID already exists with different conten
 var ErrQueueFull = errors.New("agent event queue is full")
 
 type EventQueue struct {
-	db    *sql.DB
-	mu    sync.Mutex
-	limit int
+	db        *sql.DB
+	mu        sync.Mutex
+	commandMu sync.Mutex
+	limit     int
+	stats     contracts.AgentTelemetry
 }
 
 type QueuedEvent struct {
@@ -45,18 +47,43 @@ func OpenQueue(path string, limit int) (*EventQueue, error) {
 			return nil, fmt.Errorf("create queue directory: %w", err)
 		}
 	}
+	// Create privately before SQLite opens it; WAL permissions follow this file.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("create private event queue: %w", err)
+	}
+	err = file.Chmod(0600)
+	closeErr := file.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
+		if err := os.Chmod(sidecar, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("restrict queue sidecar: %w", err)
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open event queue: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	q := &EventQueue{db: db, limit: limit}
-	if _, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;`); err == nil {
+	if _, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;`); err == nil {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS queued_events (
 			agent_id TEXT NOT NULL, event_id TEXT NOT NULL, body BLOB NOT NULL,
 			body_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL, next_attempt_at TEXT NOT NULL DEFAULT '',
 			quarantine_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(agent_id,event_id)
+		);`)
+	}
+	if err == nil {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS command_results (
+			agent_id TEXT NOT NULL, command_id TEXT NOT NULL, body_hash TEXT NOT NULL,
+			expires_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+			reported INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(agent_id,command_id)
 		);`)
 	}
 	if err != nil {
@@ -68,7 +95,7 @@ func OpenQueue(path string, limit int) (*EventQueue, error) {
 
 func (q *EventQueue) Close() error { return q.db.Close() }
 
-func (q *EventQueue) Enqueue(ctx context.Context, event contracts.Event) (bool, error) {
+func (q *EventQueue) Enqueue(ctx context.Context, event contracts.Event) (duplicate bool, err error) {
 	if event.AgentID == "" || event.EventID == "" {
 		return false, errors.New("event agent_id and event_id are required")
 	}
@@ -80,6 +107,17 @@ func (q *EventQueue) Enqueue(ctx context.Context, event contracts.Event) (bool, 
 	hashText := hex.EncodeToString(hash[:])
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	defer func() {
+		if err != nil && !errors.Is(err, ErrEventConflict) {
+			q.stats.StorageErrors++
+			q.stats.StorageError = "telemetry could not be persisted"
+			if errors.Is(err, ErrQueueFull) {
+				q.stats.StorageError = "telemetry queue is full"
+			}
+		} else if err == nil {
+			q.stats.StorageError = ""
+		}
+	}()
 	var count int
 	if err = q.db.QueryRowContext(ctx, `SELECT count(*) FROM queued_events`).Scan(&count); err != nil {
 		return false, fmt.Errorf("count event queue: %w", err)

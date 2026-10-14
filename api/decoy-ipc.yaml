@@ -79,6 +79,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/DecoyStatus'
         '401': { description: Missing or invalid agent-to-decoy token. }
+  /v1/status:
+    get:
+      tags: [Telemetry intake]
+      operationId: getAgentTelemetryStatus
+      summary: Read bounded queue health without visitor payloads
+      servers:
+        - url: http://127.0.0.1:9101
+      security:
+        - decoyToAgentBearer: []
+      responses:
+        '200':
+          description: Queue counts, delivery counters and degradation reasons.
+          content:
+            application/json:
+              schema: { $ref: './openapi.yaml#/components/schemas/AgentTelemetry' }
+        '401': { description: Missing or invalid decoy-to-agent token. }
+        '503': { description: Queue status unavailable. }
   /v1/events:
     post:
       tags: [Telemetry intake]

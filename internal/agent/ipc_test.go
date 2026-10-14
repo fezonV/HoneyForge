@@ -92,6 +92,53 @@ func TestIPCHandlerRejectsUnauthorizedAndUnavailableQueue(t *testing.T) {
 	}
 }
 
+func TestIPCStatusRequiresBearerAndExposesBoundedQuarantineWithoutPayload(t *testing.T) {
+	q, err := OpenQueue(filepath.Join(t.TempDir(), "queue.sqlite"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	event := queueEvent("one")
+	event.Payload["password"] = "synthetic-sensitive-payload"
+	ctx := context.Background()
+	if _, err = q.Enqueue(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	batch, err := q.Batch(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = q.Quarantine(ctx, batch, "center returned HTTP 409: event_conflict"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = q.Enqueue(ctx, queueEvent("two")); err != ErrQueueFull {
+		t.Fatalf("bounded quarantine: %v", err)
+	}
+	handler := IPCHandler(q, nil, "ipc-secret")
+	for _, auth := range []string{"", "ipc-secret", "Bearer wrong", "Bearer ipc-secret"} {
+		req := httptest.NewRequest("GET", "/v1/status", nil)
+		req.Header.Set("Authorization", auth)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if auth != "Bearer ipc-secret" {
+			if res.Code != 401 {
+				t.Fatalf("auth=%q status=%d", auth, res.Code)
+			}
+			continue
+		}
+		var status contracts.AgentTelemetry
+		if err = json.Unmarshal(res.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		if res.Code != 200 || status.QueueDepth != 1 || status.Quarantined != 1 || !status.Degraded || status.QuarantineReason == "" {
+			t.Fatalf("status=%d %s", res.Code, res.Body.String())
+		}
+		if strings.Contains(res.Body.String(), "synthetic-sensitive-payload") || strings.Contains(res.Body.String(), "ipc-secret") {
+			t.Fatal("diagnostics leaked payload or token")
+		}
+	}
+}
+
 func TestIPCHandlerRejectsOversizedBodyAndMissingPayload(t *testing.T) {
 	queue, err := OpenQueue(filepath.Join(t.TempDir(), "events.sqlite"), 10)
 	if err != nil {
