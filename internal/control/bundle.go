@@ -386,9 +386,12 @@ openssl rand -hex 32 > secrets/decoy_agent_ipc_token
 openssl rand -hex 32 > secrets/agent_decoy_ipc_token
 chmod 0444 secrets/enrollment_token secrets/center_ca.pem secrets/decoy_agent_ipc_token secrets/agent_decoy_ipc_token
 
-if [ ! -d source ]; then git clone --quiet --no-checkout @@SOURCE@@ source; fi
+if [ -d source ]; then
+ [ -z "$(git -C source status --porcelain)" ] || { printf 'Runtime source must be clean.\n' >&2; exit 1; }
+else
+ git clone --quiet --no-checkout @@SOURCE@@ source
+fi
 [ "$(git -C source remote get-url origin)" = @@SOURCE@@ ] || { printf 'Unexpected source repository.\n' >&2; exit 1; }
-[ -z "$(git -C source status --porcelain)" ] || { printf 'Runtime source must be clean.\n' >&2; exit 1; }
 git -C source fetch --quiet --depth 1 origin @@SHA@@
 git -C source checkout --quiet --detach @@SHA@@
 [ "$(git -C source rev-parse HEAD)" = @@SHA@@ ]
