@@ -71,3 +71,6 @@ p { margin: 0; }
   .file-size { grid-column: 3; grid-row: 1; }
   .file-body { padding: 14px; }
 }
+
+/* ProfileConfig has no dates; the integration omits that metadata column. */
+.document-row-undated { grid-template-columns: 32px minmax(0, 1fr) 52px; }

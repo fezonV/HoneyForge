@@ -12,9 +12,9 @@ import {
 } from 'lucide-react';
 import { ProfileConfig } from '../../../api/types';
 import { profileToPreviewModel } from './previewAdapter';
-import { renderLow } from './templates/low';
-import { renderMedium } from './templates/medium';
-import archiveCss from './templates/archive.css?inline';
+import { renderLow } from '../../../../../tools/decoy-lab/templates/low.js';
+import { renderMedium } from '../../../../../tools/decoy-lab/templates/medium.js';
+import archiveCss from '../../../../../tools/decoy-lab/assets/archive.css?inline';
 
 interface DecoyPreviewFrameProps {
   name: string;
@@ -54,6 +54,7 @@ export const DecoyPreviewFrame: React.FC<DecoyPreviewFrameProps> = ({ name, conf
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Предпросмотр архива</title>
   <style>${archiveCss}</style>
@@ -206,7 +207,6 @@ export const DecoyPreviewFrame: React.FC<DecoyPreviewFrameProps> = ({ name, conf
             onClick={() => {
               setPreviewState(isMedium ? 'login' : 'catalog');
               setSelectedDocId(undefined);
-              renderCurrentTemplate();
             }}
             title="Сбросить состояние"
             className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-500 hover:text-slate-800"
@@ -218,7 +218,7 @@ export const DecoyPreviewFrame: React.FC<DecoyPreviewFrameProps> = ({ name, conf
 
       {/* Frame Container */}
       <div className="bg-slate-800/10 p-3 sm:p-4 rounded-xl border border-slate-200 flex justify-center overflow-x-auto min-h-[480px]">
-        <div className={`${viewportWidths[viewport]} transition-all duration-300 shadow-lg rounded-xl overflow-hidden bg-white border border-slate-300`}>
+        <div className={`${viewportWidths[viewport]} shrink-0 transition-all duration-300 shadow-lg rounded-xl overflow-hidden bg-white border border-slate-300`}>
           <div className="h-7 bg-slate-100 border-b border-slate-200 px-3 flex items-center justify-between text-[11px] text-slate-500 font-mono select-none">
             <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-300 inline-block"></span>
@@ -230,7 +230,7 @@ export const DecoyPreviewFrame: React.FC<DecoyPreviewFrameProps> = ({ name, conf
           <iframe
             ref={iframeRef}
             title="Decoy Template Live Preview"
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-same-origin"
             onLoad={() => setIframeReady(true)}
             className="w-full h-[520px] border-0 bg-white"
           />

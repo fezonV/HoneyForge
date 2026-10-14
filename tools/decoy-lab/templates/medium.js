@@ -6,9 +6,9 @@ export function renderMedium(root, model, handlers = {}) {
   if (['login', 'login-error', 'expired'].includes(model.state)) {
     const area = element(doc, 'section', undefined, 'login-panel');
     area.append(element(doc, 'h1', model.title), element(doc, 'p', model.description, 'description'));
-    area.append(element(doc, 'h2', 'Вход в архив'));
+    area.append(element(doc, 'h2', model.loginPrompt || 'Вход в архив'));
     if (model.state !== 'login') {
-      const message = element(doc, 'p', model.state === 'expired' ? 'Срок сессии истёк. Для продолжения требуется повторный вход.' : 'Не удалось войти. Проверьте имя пользователя и пароль.', 'login-message');
+      const message = element(doc, 'p', model.state === 'expired' ? 'Срок сессии истёк. Для продолжения требуется повторный вход.' : (model.failureText || 'Не удалось войти. Проверьте имя пользователя и пароль.'), 'login-message');
       message.setAttribute('role', 'alert');
       area.append(message);
     }
@@ -26,13 +26,14 @@ export function renderMedium(root, model, handlers = {}) {
     const submit = element(doc, 'button', 'Войти', 'primary-button');
     submit.type = 'button';
     submit.disabled = true;
-    const note = element(doc, 'p', 'Макет формы. Выберите состояние входа в настройках лаборатории.', 'login-note');
+    const note = element(doc, 'p', model.loginNote || 'Макет формы. Выберите состояние входа в настройках лаборатории.', 'login-note');
     note.id = 'login-note';
     area.append(submit, note);
     main.append(area);
     return;
   }
   introduction(doc, main, model);
+  if (signedIn && model.successText) main.append(element(doc, 'p', model.successText, 'description'));
   const back = () => button(doc, 'К списку файлов', () => handlers.showFiles?.(), 'quiet-button');
   if (model.state === 'empty') {
     empty(doc, main, 'Каталог пока пуст', 'В текущем каталоге нет опубликованных материалов.', back());
@@ -43,7 +44,7 @@ export function renderMedium(root, model, handlers = {}) {
       return;
     }
     const article = element(doc, 'article', undefined, 'file-view');
-    article.append(back(), element(doc, 'p', item.path, 'view-path'), element(doc, 'h2', item.title || 'Без названия'), element(doc, 'p', displayDate(item.date) + ' · TXT · ' + fileSize(item.body), 'file-meta'), element(doc, 'pre', item.body, 'file-body'));
+    article.append(back(), element(doc, 'p', item.path, 'view-path'), element(doc, 'h2', item.title || 'Без названия'), element(doc, 'p', [item.date && displayDate(item.date), 'TXT', fileSize(item.body)].filter(Boolean).join(' · '), 'file-meta'), element(doc, 'pre', item.body, 'file-body'));
     main.append(article);
   } else {
     catalog(doc, main, model, id => handlers.openFile?.(id));

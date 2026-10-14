@@ -55,10 +55,12 @@ export function catalog(doc, main, model, open) {
     heading.append(element(doc, 'h2', section), element(doc, 'span', documents.length + ' док.', 'count'));
     group.append(heading);
     for (const item of documents) {
-      const row = element(doc, 'div', undefined, 'document-row');
+      const row = element(doc, 'div', undefined, item.date ? 'document-row' : 'document-row document-row-undated');
       const name = element(doc, 'div', undefined, 'document-name');
       name.append(button(doc, item.title || 'Без названия', () => open(item.id), 'file-button'), element(doc, 'span', item.path, 'file-path'));
-      row.append(element(doc, 'span', 'TXT', 'file-type'), name, element(doc, 'time', displayDate(item.date), 'file-date'), element(doc, 'span', fileSize(item.body), 'file-size'));
+      row.append(element(doc, 'span', 'TXT', 'file-type'), name);
+      if (item.date) row.append(element(doc, 'time', displayDate(item.date), 'file-date'));
+      row.append(element(doc, 'span', fileSize(item.body), 'file-size'));
       group.append(row);
     }
     if (!documents.length) group.append(element(doc, 'p', 'В этом разделе пока нет документов.', 'section-empty'));

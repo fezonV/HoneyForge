@@ -12,6 +12,10 @@ export interface PreviewModel {
   service: string;
   title: string;
   description: string;
+  loginNote: string;
+  loginPrompt: string;
+  failureText: string;
+  successText: string;
   sections: string[];
   documents: PreviewDocument[];
   state: string;
