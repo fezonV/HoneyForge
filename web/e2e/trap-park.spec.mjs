@@ -92,6 +92,7 @@ async function login(page, role = 'operator') {
   await page.getByLabel('Пароль доступа', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Войти в консоль' }).click();
   await expect(page.getByRole('heading', { name: 'Парк ловушек' })).toBeVisible();
+  await expect(page.getByText('Live WS', { exact: true })).toBeVisible();
 }
 async function headers(page) {
   const cookies = await page.context().cookies();

@@ -121,7 +121,14 @@ func (s *Server) websocketOrigin(next http.Handler) http.Handler {
 
 func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 	actor := currentActor(r)
-	conn, err := websocket.Accept(w, r, nil)
+	// websocketOrigin already requires the exact configured scheme/host/port.
+	// A reverse proxy may use an internal Host when forwarding the upgrade.
+	publicOrigin, err := url.Parse(s.origin)
+	if err != nil || publicOrigin.Host == "" {
+		fail(w, r, http.StatusForbidden, "origin_forbidden", "WebSocket Origin is not allowed", nil)
+		return
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{publicOrigin.Host}})
 	if err != nil {
 		return
 	}
