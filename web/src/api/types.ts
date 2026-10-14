@@ -137,6 +137,18 @@ export interface Trap {
   deployment_bindings?: DeploymentBinding[];
 }
 
+export interface TrapCommand {
+  id: string;
+  trap_id: string;
+  type: 'start' | 'stop' | 'apply_profile';
+  target_profile_id?: string | null;
+  target_revision?: number | null;
+  status: 'queued' | 'delivered' | 'applied' | 'failed' | 'expired';
+  error?: string;
+  created_at: string;
+  expires_at: string;
+}
+
 export type EventType =
   | 'connection.opened'
   | 'http.request'

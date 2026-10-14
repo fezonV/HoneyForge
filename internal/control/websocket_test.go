@@ -1,13 +1,31 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
 	"honeyforge/internal/contracts"
 )
+
+func TestWebsocketHandshakeUsesConfiguredPublicOriginBehindProxy(t *testing.T) {
+	s := &Server{origin: "https://console.example:8443", ws: newWSHub()}
+	server := httptest.NewServer(s.websocketOrigin(http.HandlerFunc(s.websocket)))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, response, err := websocket.Dial(ctx, "ws"+server.URL[4:]+"/api/v1/ws", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {s.origin}},
+	})
+	if err != nil {
+		t.Fatalf("configured public Origin rejected behind proxy: %v (response=%v)", err, response)
+	}
+	_ = conn.CloseNow()
+}
 
 func TestWebsocketOriginRequiresExactConfiguredOrigin(t *testing.T) {
 	s := &Server{origin: "https://honeyforge.example"}

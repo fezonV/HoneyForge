@@ -10,11 +10,12 @@ import { EventsScreen } from './screens/EventsScreen';
 import { AuditScreen } from './screens/AuditScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { Loader2 } from 'lucide-react';
+import { useTrapRealtime } from './api/realtime';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isLoading, role } = useAuth();
+  const { isAuthenticated, isLoading, role, isDevMode, user } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavTab>('overview');
-  const [wsStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
+  const realtime = useTrapRealtime(isAuthenticated && !isLoading && !isDevMode, user?.id);
 
   // URL hash sync for browser back/forward and direct tab links
   useEffect(() => {
@@ -56,7 +57,7 @@ const MainLayout: React.FC = () => {
       <Header
         currentTab={currentTab}
         onSelectTab={handleSelectTab}
-        wsStatus={wsStatus}
+        wsStatus={realtime.status}
       />
 
       {/* Viewer read-only warning bar if viewer role */}
@@ -66,7 +67,7 @@ const MainLayout: React.FC = () => {
       <main className="flex-1">
         {currentTab === 'overview' && <OverviewScreen />}
         {currentTab === 'profiles' && <ProfilesScreen />}
-        {currentTab === 'traps' && <TrapsScreen />}
+        {currentTab === 'traps' && <TrapsScreen realtimeRevision={realtime.revision} />}
         {currentTab === 'events' && <EventsScreen />}
         {currentTab === 'audit' && <AuditScreen />}
       </main>

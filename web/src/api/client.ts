@@ -15,6 +15,7 @@ import {
   MaskingConfig,
   ProfileConfig,
   ProfileRevision,
+  TrapCommand,
 } from './types';
 import {
   FIXTURE_OPERATOR,
@@ -558,6 +559,19 @@ export const api = {
   },
 
   traps: {
+    async commands(trapId: string): Promise<TrapCommand[]> {
+      if (isDevModeActive()) return [];
+      const items: TrapCommand[] = [];
+      let cursor = '';
+      do {
+        const params = new URLSearchParams({ limit: '100' });
+        if (cursor) params.set('cursor', cursor);
+        const page = await request<Page<TrapCommand>>(`/api/v1/traps/${encodeURIComponent(trapId)}/commands?${params}`);
+        items.push(...(page.items || []));
+        cursor = page.next_cursor || '';
+      } while (cursor);
+      return items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, 10);
+    },
     async downloadBundle(trapId: string): Promise<void> {
       if (isDevModeActive()) throw new ApiRequestError('Комплект доступен только через настоящий API', 409, 'demo_mode');
       const artifact = await request<Blob>(`/api/v1/traps/${encodeURIComponent(trapId)}/bundle`, {}, 30000, 'blob');
