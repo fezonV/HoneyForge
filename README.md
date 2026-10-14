@@ -130,6 +130,11 @@ API предоставляет `/healthz`, `/readyz`, `/api/v1` для опер�
 
 Полный контракт и примеры описаны в [api/openapi.yaml](api/openapi.yaml); отдельные JSON-файлы находятся в [examples](examples). Приём и чтение событий работают; `/api/v1/ws` передаёт авторизованным клиентам уведомления о сохранённых изменениях. Центр безопасного Compose размещения и текущие ограничения BE-04 описаны в [BE-04 foundation](docs/BE04_FOUNDATION.md). Операторский UI в [web/](web/README.md) использует `/api/v1`; парк, enrollment и запуск скачанного bundle проверены с настоящими агентами и Docker Compose. Остальные FE-задачи и production-приёмка остаются отдельными.
 
+QA-04 запускает обязательные CI, schema, Compose health и Playwright smoke
+проверки. Матрица и воспроизводимый runbook находятся в
+[docs/QA04_ACCEPTANCE.md](docs/QA04_ACCEPTANCE.md), [docs/acceptance.md](docs/acceptance.md)
+и [docs/demo.md](docs/demo.md).
+
 ## Что готово в текущем прототипе
 
 - `main.go` запускает HTTP-сервер, встраивает HTML-страницы и хранит последние 100 событий в потокобезопасном журнале.
