@@ -684,10 +684,13 @@ func TestOperatorDownloadsAuditedTrapBundle(t *testing.T) {
 	if profileResponse.Code != http.StatusCreated {
 		t.Fatalf("create bundle profile=%d %s", profileResponse.Code, profileResponse.Body.String())
 	}
-	var profile contracts.Profile
-	if err = json.Unmarshal(profileResponse.Body.Bytes(), &profile); err != nil {
+	var profileResponseBody struct {
+		Profile contracts.Profile `json:"profile"`
+	}
+	if err = json.Unmarshal(profileResponse.Body.Bytes(), &profileResponseBody); err != nil {
 		t.Fatal("decode profile response", err)
 	}
+	profile := profileResponseBody.Profile
 	trapBody := `{"name":"bundle trap","deployment_bindings":[{"service_id":"web","host_port":18080}]}`
 	trapResponse := op.request(http.MethodPost, "/api/v1/traps", trapBody, true, true)
 	if trapResponse.Code != http.StatusCreated {

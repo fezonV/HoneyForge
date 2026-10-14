@@ -102,6 +102,7 @@ type Trap struct {
 	AppliedRevision    *int                `json:"applied_revision"`
 	AgentStatus        string              `json:"agent_status"`
 	ServiceStatus      string              `json:"service_status"`
+	Telemetry          *AgentTelemetry     `json:"telemetry,omitempty"`
 	LastSeen           *string             `json:"last_seen,omitempty"`
 	DeploymentBindings []DeploymentBinding `json:"deployment_bindings"`
 	CreatedAt          string              `json:"created_at"`
@@ -120,6 +121,20 @@ type Agent struct {
 	CreatedAt string  `json:"created_at"`
 	LastSeen  *string `json:"last_seen,omitempty"`
 }
+type AgentTelemetry struct {
+	QueueDepth       int    `json:"queue_depth"`
+	QueueLimit       int    `json:"queue_limit"`
+	Quarantined      int    `json:"quarantined"`
+	QuarantineReason string `json:"quarantine_reason,omitempty"`
+	SentEvents       int64  `json:"sent_events"`
+	DeliveryErrors   int64  `json:"delivery_errors"`
+	DeliveryRetries  int64  `json:"delivery_retries"`
+	StorageErrors    int64  `json:"storage_errors"`
+	StorageError     string `json:"storage_error,omitempty"`
+	DeliveryError    string `json:"delivery_error,omitempty"`
+	Degraded         bool   `json:"degraded"`
+}
+
 type Command struct {
 	ID                string  `json:"id"`
 	TrapID            string  `json:"trap_id"`

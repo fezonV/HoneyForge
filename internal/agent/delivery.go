@@ -22,6 +22,9 @@ type DeliveryMetrics struct {
 func (q *EventQueue) Flush(ctx context.Context, client *Client, state *State, batchSize int, metrics *DeliveryMetrics) error {
 	items, err := q.Batch(ctx, batchSize)
 	if err != nil || len(items) == 0 {
+		if err != nil {
+			q.recordDelivery(deliveryOutcome{}, err)
+		}
 		return err
 	}
 	var outcome deliveryOutcome
@@ -39,6 +42,7 @@ func (q *EventQueue) Flush(ctx context.Context, client *Client, state *State, ba
 		metrics.SentEvents += outcome.sentEvents
 		metrics.Quarantined += outcome.quarantined
 	}
+	q.recordDelivery(outcome, err)
 	return err
 }
 
@@ -88,7 +92,7 @@ func permanentEventRejection(err *HTTPStatusError) bool {
 		return false
 	}
 	switch err.Message {
-	case "invalid_json", "event_conflict", "body_too_large", "validation_failed":
+	case "invalid_json", "event_conflict", "session_conflict", "body_too_large", "validation_failed":
 		return true
 	default:
 		return false

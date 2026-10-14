@@ -29,7 +29,7 @@ func NewHTTPDecoyAdapter(rawURL, token string) (*HTTPDecoyAdapter, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	return &HTTPDecoyAdapter{baseURL: strings.TrimRight(u.String(), "/"), token: token, client: &http.Client{Transport: transport, Timeout: 5 * time.Second}}, nil
+	return &HTTPDecoyAdapter{baseURL: strings.TrimRight(u.String(), "/"), token: token, client: &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: rejectRedirect}}, nil
 }
 
 func (a *HTTPDecoyAdapter) call(ctx context.Context, method, path string, input, output any) error {

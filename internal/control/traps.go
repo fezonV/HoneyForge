@@ -102,14 +102,20 @@ func readTrap(ctx context.Context, q interface {
 }, id string) (contracts.Trap, error) {
 	var t contracts.Trap
 	var binds []byte
+	var telemetry []byte
 	var last *time.Time
 	var created time.Time
-	err := q.QueryRow(ctx, `SELECT id::text,name,desired_profile_id::text,desired_revision,applied_profile_id::text,applied_revision,service_status,last_seen,deployment_bindings,created_at FROM traps WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&t.ID, &t.Name, &t.DesiredProfileID, &t.DesiredRevision, &t.AppliedProfileID, &t.AppliedRevision, &t.ServiceStatus, &last, &binds, &created)
+	err := q.QueryRow(ctx, `SELECT id::text,name,desired_profile_id::text,desired_revision,applied_profile_id::text,applied_revision,service_status,last_seen,deployment_bindings,created_at,agent_telemetry FROM traps WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&t.ID, &t.Name, &t.DesiredProfileID, &t.DesiredRevision, &t.AppliedProfileID, &t.AppliedRevision, &t.ServiceStatus, &last, &binds, &created, &telemetry)
 	if err != nil {
 		return t, err
 	}
 	if err = json.Unmarshal(binds, &t.DeploymentBindings); err != nil {
 		return t, err
+	}
+	if len(telemetry) > 0 {
+		if err = json.Unmarshal(telemetry, &t.Telemetry); err != nil {
+			return t, err
+		}
 	}
 	if t.DeploymentBindings == nil {
 		t.DeploymentBindings = []contracts.DeploymentBinding{}
@@ -564,13 +570,22 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		ServiceState string `json:"service_state"`
+		ServiceState string                    `json:"service_state"`
+		Telemetry    *contracts.AgentTelemetry `json:"telemetry,omitempty"`
 	}
 	if !decode(w, r, &request) {
 		return
 	}
 	if request.ServiceState == "" {
 		request.ServiceState = "unknown"
+	}
+	var telemetryJSON []byte
+	if m := request.Telemetry; m != nil {
+		if m.QueueDepth < 0 || m.QueueLimit < 1 || m.Quarantined < 0 || m.Quarantined > m.QueueDepth || m.SentEvents < 0 || m.DeliveryErrors < 0 || m.DeliveryRetries < 0 || m.StorageErrors < 0 || len(m.StorageError) > 500 || len(m.DeliveryError) > 500 || len(m.QuarantineReason) > 500 {
+			fail(w, r, 422, "validation_failed", "invalid telemetry status", nil)
+			return
+		}
+		telemetryJSON, _ = json.Marshal(m)
 	}
 	switch request.ServiceState {
 	case "unknown", "running", "stopped", "degraded", "error":
@@ -603,7 +618,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID); err == nil {
-		_, err = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now(),service_status=$2 WHERE id=$1 AND deleted_at IS NULL`, id, request.ServiceState)
+		_, err = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now(),service_status=$2,agent_telemetry=$3 WHERE id=$1 AND deleted_at IS NULL`, id, request.ServiceState, telemetryJSON)
 	}
 	if err != nil {
 		fail(w, r, 503, "not_ready", "database unavailable", nil)
@@ -926,6 +941,14 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 503, "not_ready", "command unavailable", nil)
 		return
 	}
+	if currentStatus == "applied" || currentStatus == "failed" {
+		if err = tx.Commit(ctx); err != nil {
+			fail(w, r, 503, "not_ready", "command unavailable", nil)
+			return
+		}
+		writeJSON(w, 200, map[string]string{"status": currentStatus, "error": currentError})
+		return
+	}
 	if currentStatus == "expired" || time.Now().After(expires) {
 		if currentStatus != "expired" {
 			if _, err = tx.Exec(ctx, `UPDATE commands SET status='expired',delivered_at=NULL WHERE id=$1`, commandID); err != nil {
@@ -939,14 +962,6 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 			s.publishNotification("command.updated", commandID, map[string]any{"command_id": commandID, "trap_id": id, "status": "expired"})
 		}
 		fail(w, r, 409, "command_expired", "command has expired", nil)
-		return
-	}
-	if currentStatus == "applied" || currentStatus == "failed" {
-		if err = tx.Commit(ctx); err != nil {
-			fail(w, r, 503, "not_ready", "command unavailable", nil)
-			return
-		}
-		writeJSON(w, 200, map[string]string{"status": currentStatus, "error": currentError})
 		return
 	}
 	if currentStatus != "delivered" {

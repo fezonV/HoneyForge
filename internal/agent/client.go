@@ -123,7 +123,11 @@ func NewClientWithCA(rawURL, caFile string) (*Client, error) {
 		tlsConfig.RootCAs = roots
 	}
 	transport.TLSClientConfig = tlsConfig
-	return &Client{baseURL: u.String(), http: &http.Client{Transport: transport, Timeout: 10 * time.Second}}, nil
+	return &Client{baseURL: u.String(), http: &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: rejectRedirect}}, nil
+}
+
+func rejectRedirect(*http.Request, []*http.Request) error {
+	return errors.New("IPC and management API redirects are not allowed")
 }
 
 func (c *Client) Enroll(ctx context.Context, trapID, enrollmentToken string) (*State, error) {
@@ -154,6 +158,10 @@ func (c *Client) FetchConfig(ctx context.Context, state *State) (*ConfigResponse
 }
 
 func (c *Client) Heartbeat(ctx context.Context, state *State, serviceState string) error {
+	return c.HeartbeatWithTelemetry(ctx, state, serviceState, nil)
+}
+
+func (c *Client) HeartbeatWithTelemetry(ctx context.Context, state *State, serviceState string, telemetry *contracts.AgentTelemetry) error {
 	if state == nil || state.Token == "" || state.TrapID == "" {
 		return errors.New("agent state is missing its credential or trap ID")
 	}
@@ -163,7 +171,10 @@ func (c *Client) Heartbeat(ctx context.Context, state *State, serviceState strin
 		ServiceState string `json:"service_status"`
 		LastSeen     string `json:"last_seen"`
 	}
-	err := c.doJSON(ctx, http.MethodPost, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/heartbeat", state.Token, map[string]string{"service_state": serviceState}, http.StatusOK, &result)
+	err := c.doJSON(ctx, http.MethodPost, "/agent/v1/traps/"+url.PathEscape(state.TrapID)+"/heartbeat", state.Token, struct {
+		ServiceState string                    `json:"service_state"`
+		Telemetry    *contracts.AgentTelemetry `json:"telemetry,omitempty"`
+	}{serviceState, telemetry}, http.StatusOK, &result)
 	if err != nil {
 		return err
 	}
