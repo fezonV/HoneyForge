@@ -56,7 +56,9 @@ paths:
       tags: [Visitor pages]
       operationId: getDecoyLogin
       summary: Render the medium-profile login form
-      description: Returns a minimal username/password HTML form. Low profiles do not expose login and return 404.
+      description: >-
+        Returns the server-backed archive username/password HTML form.
+        Low profiles do not expose login and return 404.
       responses:
         '200':
           description: Login form HTML.
@@ -103,6 +105,9 @@ paths:
         '401':
           description: Login failed; the response body contains the profile's visible failure text and no session cookie is set.
           content:
+            text/html:
+              schema:
+                type: string
             text/plain:
               schema:
                 type: string
@@ -118,7 +123,9 @@ paths:
       operationId: getDecoyFiles
       summary: List fake files or read one fake file
       description: >-
-        Without path, returns the profile's fake-file paths as JSON. Listing is
+        Without path, returns the profile's fake-file paths as JSON. With Accept:
+        text/html it renders the archive catalogue. view=1 with Accept: text/html
+        renders an escaped file viewer; download=1 always returns an attachment. Listing is
         public for a low profile and requires a valid session for a medium
         profile. A low profile never serves file content: a path request returns
         403. Medium-profile file reads require a session and only return literal
@@ -128,6 +135,12 @@ paths:
         - {}
         - archiveSession: []
       parameters:
+        - name: view
+          in: query
+          description: Set to 1 with Accept text/html for the browser file viewer.
+          schema:
+            type: string
+            enum: ['1']
         - name: path
           in: query
           required: false
@@ -149,9 +162,15 @@ paths:
             path, text/plain fake file content; download=1 also sets
             Content-Disposition to attachment.
           content:
+            text/html:
+              schema:
+                type: string
             application/json:
               schema:
                 $ref: '#/components/schemas/FileListing'
+            text/html:
+              schema:
+                type: string
             text/plain:
               schema:
                 type: string
@@ -165,6 +184,9 @@ paths:
         '403':
           description: Low profiles expose the catalogue but do not serve file content.
           content:
+            text/html:
+              schema:
+                type: string
             text/plain:
               schema:
                 type: string
@@ -201,7 +223,8 @@ paths:
         Accepts a URL-encoded command string of at most 1024 bytes in a form
         body limited to 16 KiB. Only pwd, ls, and cat over configured fake
         files are simulated. Unknown commands return a refusal message; no host
-        shell command is executed. The response is text/plain with status 200.
+        shell command is executed. The response is text/plain with status 200;
+        Accept: text/html renders the console form and escaped result.
       security:
         - archiveSession: []
       requestBody:
@@ -214,6 +237,9 @@ paths:
         '200':
           description: Literal simulated command result.
           content:
+            text/html:
+              schema:
+                type: string
             text/plain:
               schema:
                 type: string
