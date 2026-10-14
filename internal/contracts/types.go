@@ -129,6 +129,7 @@ type Command struct {
 	TargetProfileID   *string `json:"target_profile_id,omitempty"`
 	TargetRevision    *int    `json:"target_revision,omitempty"`
 	Status            string  `json:"status"`
+	Error             string  `json:"error,omitempty"`
 	ExpiresAt         string  `json:"expires_at"`
 	CreatedAt         string  `json:"created_at"`
 }
