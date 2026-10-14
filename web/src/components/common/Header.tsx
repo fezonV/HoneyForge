@@ -88,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
               title={
                 wsStatus === 'connected'
                   ? 'WebSocket подключен (Realtime поток событий активен)'
-                  : 'WebSocket переподключается...'
+                  : wsStatus === 'connecting' ? 'WebSocket подключается...' : 'WebSocket отключён; состояния обновляются через API'
               }
             >
               {wsStatus === 'connected' ? (
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
               ) : (
                 <>
                   <WifiOff className="w-3.5 h-3.5" />
-                  <span>WS Офлайн</span>
+                  <span>{wsStatus === 'connecting' ? 'WS Подключение' : 'WS Офлайн'}</span>
                 </>
               )}
             </div>

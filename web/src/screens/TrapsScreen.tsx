@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, RefreshCw } from 'lucide-react';
-import { DeploymentBinding, Profile, ProfileRevision, Trap } from '../api/types';
+import { DeploymentBinding, Profile, ProfileRevision, Trap, TrapCommand } from '../api/types';
 import { api, isDevModeActive } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -22,7 +22,7 @@ function progress(trap: Trap): string {
   return 'Конфигурация применена';
 }
 
-export const TrapsScreen: React.FC = () => {
+export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeRevision = 0 }) => {
   const { role } = useAuth();
   const { notify } = useNotification();
   const [traps, setTraps] = useState<Trap[]>([]);
@@ -49,7 +49,12 @@ export const TrapsScreen: React.FC = () => {
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [bundleTrap, setBundleTrap] = useState<Trap | null>(null);
   const [bundleError, setBundleError] = useState('');
+  const [commands, setCommands] = useState<TrapCommand[]>([]);
+  const [commandsError, setCommandsError] = useState('');
+  const [commandsLoading, setCommandsLoading] = useState(false);
+  const [commandRevision, setCommandRevision] = useState(0);
   const refreshing = useRef(false);
+  const refreshPending = useRef(false);
   const currentRole = useRef(role);
   currentRole.current = role;
   const mounted = useRef(true);
@@ -69,7 +74,7 @@ export const TrapsScreen: React.FC = () => {
   }, [role]);
 
   const refresh = useCallback(async (showLoading = false) => {
-    if (refreshing.current) return;
+    if (refreshing.current) { refreshPending.current = true; return; }
     refreshing.current = true;
     if (showLoading) setLoading(true);
     try {
@@ -90,6 +95,10 @@ export const TrapsScreen: React.FC = () => {
     } finally {
       refreshing.current = false;
       if (showLoading) setLoading(false);
+      if (refreshPending.current && mounted.current) {
+        refreshPending.current = false;
+        void refresh();
+      }
     }
   }, []);
 
@@ -98,6 +107,25 @@ export const TrapsScreen: React.FC = () => {
     const timer = window.setInterval(() => { refresh(); setTick(Date.now()); }, 5000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => { if (realtimeRevision) void refresh(); }, [realtimeRevision, refresh]);
+
+  useEffect(() => {
+    setCommands([]);
+    setCommandsError('');
+    setCommandsLoading(!!selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let active = true;
+    api.traps.commands(selectedId).then((items) => {
+      if (active) { setCommands(items); setCommandsError(''); }
+    }).catch((cause) => {
+      if (active) setCommandsError(cause instanceof Error ? cause.message : 'Не удалось загрузить команды');
+    }).finally(() => { if (active) setCommandsLoading(false); });
+    return () => { active = false; };
+  }, [selectedId, realtimeRevision, tick, commandRevision]);
 
   useEffect(() => {
     const id = sessionStorage.getItem('hf_deploy_profile_id');
@@ -198,6 +226,7 @@ export const TrapsScreen: React.FC = () => {
         expected_profile_id: trap.profile_id, expected_revision: trap.desired_revision, ttl_seconds: 300,
       });
       notify('info', 'Команда принята в очередь', `${result.status}. Выполнение агентом пока не подтверждено.`);
+      setCommandRevision((value) => value + 1);
       await refresh();
     } catch (cause) {
       notify('error', 'Команда отклонена', cause instanceof Error ? cause.message : 'Неизвестная ошибка');
@@ -235,6 +264,7 @@ export const TrapsScreen: React.FC = () => {
     </div>
     {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3">{trap.profile_id ? <LevelBadge level={trap.level} /> : '—'}<div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs">{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}
     {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{!selected.last_seen_at && <Button size="sm" disabled={busy} onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => { setBundleError(''); setBundleTrap(selected); }}>Комплект запуска</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'apply_profile')}>Применить профиль</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'start')}>Запустить</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'stop')}>Остановить</Button></div>}</section>}
+    {selected && <CommandHistory commands={commands} error={commandsError} loading={commandsLoading} />}
     {step !== null && role === 'operator' && <Modal isOpen onClose={closeWizard} title="Новый экземпляр" description={`Шаг ${step + 1} из 4`} maxWidth="xl"><div className="space-y-4 text-sm">
       {step === 0 && <><label className="block">Профиль<select className="block w-full border rounded p-2 mt-1" aria-label="Профиль" value={profileId} onChange={(e) => { setProfileId(e.target.value); setRequestedRevision(null); }}><option value="">Выберите профиль</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.level})</option>)}</select></label>{revisionError && <p role="alert" className="text-rose-700">{revisionError}</p>}<label className="block">Версия<select className="block w-full border rounded p-2 mt-1" aria-label="Версия" value={revision} onChange={(e) => setRevision(Number(e.target.value))}>{revisions.map((r) => <option key={r.revision} value={r.revision}>Revision {r.revision}</option>)}</select></label><Button disabled={revisionLoading || !chosenRevision} onClick={() => setStep(1)}>Далее</Button></>}
       {step === 1 && <><label className="block">Имя экземпляра<input className="block w-full border rounded p-2 mt-1" maxLength={120} required disabled={!!created} value={name} onChange={(e) => setName(e.target.value)} /></label>{bindings.map((binding, index) => <div key={binding.service_id} className="grid grid-cols-2 gap-2"><label>Порт {binding.service_id}<input type="number" min={1} max={65535} className="block w-full border rounded p-2" disabled={!!created} value={binding.host_port} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, host_port: Number(e.target.value) } : b))} /></label><label>Bind IP<input className="block w-full border rounded p-2" disabled={!!created} value={binding.bind_address || ''} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, bind_address: e.target.value } : b))} /></label></div>)}<p className="bg-amber-50 border border-amber-200 p-3 rounded">Проверьте свободные порты и доступность интерфейса на подготовленном узле. Изменение host port после запуска требует пересоздания deployment.</p>{submitError && <p role="alert" className="text-rose-700">{submitError}</p>}<div className="flex gap-2"><Button variant="outline" disabled={!!created || busy} onClick={() => setStep(0)}>Назад</Button><Button disabled={!name.trim() || bindings.some((b) => !b.service_id || !Number.isInteger(b.host_port) || b.host_port < 1 || b.host_port > 65535)} isLoading={busy} onClick={create}>{created ? 'Повторить назначение профиля' : 'Создать и назначить профиль'}</Button></div></>}
@@ -248,5 +278,25 @@ export const TrapsScreen: React.FC = () => {
 };
 
 const TokenView: React.FC<{ token: string; expiresAt: number }> = ({ token, expiresAt }) => <div className="space-y-2"><p>Скопируйте сейчас. Повторно посмотреть токен нельзя.</p><div className="flex gap-2"><code className="bg-slate-100 p-2 rounded break-all flex-1">{token}</code><button type="button" title="Копировать токен" onClick={() => navigator.clipboard.writeText(token)}><Copy size={18} /></button></div><p className="text-xs">Истекает: {dateText(new Date(expiresAt).toISOString())}</p></div>;
+
+const CommandHistory: React.FC<{ commands: TrapCommand[]; error: string; loading: boolean }> = ({ commands, error, loading }) => {
+  const actions = { start: 'Запуск', stop: 'Остановка', apply_profile: 'Применение профиля' };
+  const states = { queued: 'В очереди', delivered: 'Доставлена агенту', applied: 'Выполнена', failed: 'Ошибка выполнения', expired: 'Срок истёк' };
+  return <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Результаты команд">
+    <h2 className="text-lg font-semibold">Последние команды</h2>
+    <p className="text-xs text-slate-600">Доставка агенту и выполнение показываются по подтверждениям сервера. Текущее состояние сервиса указано в карточке.</p>
+    {error && <p role="alert" className="text-rose-700">{error}. Результаты ниже могут быть устаревшими.</p>}
+    {loading ? <p>Загрузка команд…</p> : commands.length === 0 && !error ? <p className="text-sm text-slate-500">Команды ещё не отправлены.</p> : null}
+    {commands.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm text-left" aria-label="Последние команды ловушки">
+      <thead className="text-slate-600"><tr><th className="p-2">Команда</th><th className="p-2">Версия</th><th className="p-2">Результат</th><th className="p-2">Создана / срок действия</th></tr></thead>
+      <tbody>{commands.map((command) => <tr key={command.id} className="border-t align-top">
+        <td className="p-2">{actions[command.type] || command.type}<div className="text-xs font-mono break-all">{command.id}</div></td>
+        <td className="p-2">{command.target_revision ?? '—'}</td>
+        <td className="p-2">{states[command.status] || command.status}{command.error && <p className="text-rose-700 whitespace-pre-wrap break-words">{command.error}</p>}</td>
+        <td className="p-2">{dateText(command.created_at)}<br />до {dateText(command.expires_at)}</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
+};
 
 const BundleInstructions = () => <div className="space-y-2"><p>На подготовленном Linux-узле нужны Docker Compose, git, openssl и исходящий HTTPS к центру. Разрешите только опубликованные порты приманки.</p><p>Распакуйте ZIP, прочитайте README.txt и запустите <code>./install.sh</code>. Введите свежий enrollment-токен по запросу установщика. Токен в архив не включён.</p><p>После регистрации поставьте «Применить профиль» и проверьте применённую версию и состояние сервиса в карточке. Скачивание комплекта не запускает ловушку.</p></div>;
