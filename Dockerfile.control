@@ -1,13 +1,20 @@
-FROM golang:1.27.2-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-control ./cmd/control
+commit 9c71957c0e68401902827d344cba5ac1bf6ba8f0
+Author: Анна Ардышева <ardyshevaanna@gmail.com>
+Date:   Wed Oct 14 12:48:08 2026 +0000
 
-FROM alpine:3.22
-RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge
-COPY --from=build /out/honeyforge-control /usr/local/bin/honeyforge-control
-USER honeyforge
-EXPOSE 8081
-ENTRYPOINT ["/usr/local/bin/honeyforge-control"]
+    feat(be-04): generate audited pinned trap bundles
+
+diff --git a/Dockerfile.control b/Dockerfile.control
+index 031939c..ff243f9 100644
+--- a/Dockerfile.control
++++ b/Dockerfile.control
+@@ -3,7 +3,8 @@ WORKDIR /src
+ COPY go.mod go.sum ./
+ RUN go mod download
+ COPY . .
+-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-control ./cmd/control
++ARG HF_SOURCE_REVISION=unknown
++RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildRevision=${HF_SOURCE_REVISION}" -o /out/honeyforge-control ./cmd/control
+ 
+ FROM alpine:3.22
+ RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge

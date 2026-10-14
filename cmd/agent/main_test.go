@@ -1,75 +1,47 @@
-package main
+commit 9c71957c0e68401902827d344cba5ac1bf6ba8f0
+Author: Анна Ардышева <ardyshevaanna@gmail.com>
+Date:   Wed Oct 14 12:48:08 2026 +0000
 
-import (
-	"context"
-	"errors"
-	"path/filepath"
-	"testing"
+    feat(be-04): generate audited pinned trap bundles
 
-	"honeyforge/internal/agent"
-)
-
-type fixedConfigFetcher struct {
-	config *agent.ConfigResponse
-	err    error
-}
-
-func (f fixedConfigFetcher) FetchConfig(context.Context, *agent.State) (*agent.ConfigResponse, error) {
-	return f.config, f.err
-}
-
-func TestSyncConfigDoesNotChangeStateWhenPersistenceFails(t *testing.T) {
-	state := &agent.State{AgentID: "11111111-1111-4111-8111-111111111111", TrapID: "22222222-2222-4222-8222-222222222222", Token: "agent-token", Config: &agent.ConfigResponse{ProfileID: "33333333-3333-4333-8333-333333333333", Revision: 1}}
-	fetcher := fixedConfigFetcher{config: &agent.ConfigResponse{TrapID: state.TrapID, ProfileID: state.Config.ProfileID, Revision: 2}}
-	dir := t.TempDir()
-	if err := syncConfig(context.Background(), fetcher, state, dir); err == nil {
-		t.Fatal("syncConfig succeeded while its state path was a directory")
-	}
-	if got := state.ConfigSnapshot(); got == nil || got.Revision != 1 {
-		t.Fatalf("in-memory configuration changed after failed persistence: %+v", got)
-	}
-
-	statePath := filepath.Join(dir, "retry", "agent-state.json")
-	if err := syncConfig(context.Background(), fetcher, state, statePath); err != nil {
-		t.Fatalf("retry syncConfig after persistence failure: %v", err)
-	}
-	if got := state.ConfigSnapshot(); got == nil || got.Revision != 2 {
-		t.Fatalf("successful retry did not update in-memory configuration: %+v", got)
-	}
-	persisted, err := agent.LoadState(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.Config == nil || persisted.Config.Revision != 2 {
-		t.Fatalf("persisted revision=%v, want 2", persisted.Config)
-	}
-}
-
-type heartbeatAdapter struct {
-	state string
-	err   error
-}
-
-func (a heartbeatAdapter) ApplyConfiguration(context.Context, agent.ConfigResponse) error { return nil }
-func (a heartbeatAdapter) Start(context.Context) error                                    { return nil }
-func (a heartbeatAdapter) Stop(context.Context) error                                     { return nil }
-func (a heartbeatAdapter) ServiceState(context.Context) (string, error)                   { return a.state, a.err }
-
-func TestCurrentServiceStateUsesAdapterStatus(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		adapter agent.DecoyAdapter
-		want    string
-	}{
-		{name: "running", adapter: heartbeatAdapter{state: "running"}, want: "running"},
-		{name: "adapter error", adapter: heartbeatAdapter{state: "running", err: errors.New("status unavailable")}, want: "error"},
-		{name: "unsupported status", adapter: heartbeatAdapter{state: "starting"}, want: "error"},
-		{name: "missing adapter", want: "unknown"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := currentServiceState(context.Background(), test.adapter); got != test.want {
-				t.Fatalf("currentServiceState()=%q, want %q", got, test.want)
-			}
-		})
-	}
-}
+diff --git a/cmd/agent/main_test.go b/cmd/agent/main_test.go
+index 0ebcbe9..c7c9dad 100644
+--- a/cmd/agent/main_test.go
++++ b/cmd/agent/main_test.go
+@@ -3,6 +3,7 @@ package main
+ import (
+ 	"context"
+ 	"errors"
++	"os"
+ 	"path/filepath"
+ 	"testing"
+ 
+@@ -14,6 +15,28 @@ type fixedConfigFetcher struct {
+ 	err    error
+ }
+ 
++func TestReadSecretSupportsDockerSecretFiles(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "secret")
++	if err := os.WriteFile(path, []byte("  bootstrap-token\n"), 0400); err != nil {
++		t.Fatal(err)
++	}
++	if got, err := readSecret("ignored-inline-value", path); err != nil || got != "bootstrap-token" {
++		t.Fatalf("readSecret()=(%q,%v), want trimmed file value", got, err)
++	}
++	if got, err := readSecret("legacy-token", ""); err != nil || got != "legacy-token" {
++		t.Fatalf("inline secret compatibility=(%q,%v)", got, err)
++	}
++	if err := os.Chmod(path, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, make([]byte, 4097), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := readSecret("", path); err == nil {
++		t.Fatal("oversized secret file was accepted")
++	}
++}
++
+ func (f fixedConfigFetcher) FetchConfig(context.Context, *agent.State) (*agent.ConfigResponse, error) {
+ 	return f.config, f.err
+ }

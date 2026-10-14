@@ -1,0 +1,24 @@
+commit 9c71957c0e68401902827d344cba5ac1bf6ba8f0
+Author: Анна Ардышева <ardyshevaanna@gmail.com>
+Date:   Wed Oct 14 12:48:08 2026 +0000
+
+    feat(be-04): generate audited pinned trap bundles
+
+diff --git a/deploy/compose.yaml b/deploy/compose.yaml
+index 3fbe5ff..7a741bb 100644
+--- a/deploy/compose.yaml
++++ b/deploy/compose.yaml
+@@ -26,10 +26,13 @@ services:
+     build:
+       context: ..
+       dockerfile: Dockerfile.control
++      args:
++        HF_SOURCE_REVISION: ${HF_SOURCE_REVISION:-unknown}
+     environment:
+       DATABASE_URL_FILE: /run/secrets/control_database_url
+       LISTEN_ADDR: 0.0.0.0:8081
+       PUBLIC_ORIGIN: https://${PUBLIC_HOST:?Set PUBLIC_HOST}:${MANAGEMENT_PORT:-8443}
++      AGENT_ORIGIN: https://${PUBLIC_HOST}:${AGENT_PORT:-9443}
+       COOKIE_SECURE: "true"
+       GEOIP_CITY_DB: ${GEOIP_CITY_DB:-}
+       GEOIP_ASN_DB: ${GEOIP_ASN_DB:-}
