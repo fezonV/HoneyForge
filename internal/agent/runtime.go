@@ -39,13 +39,14 @@ func executeCommand(ctx context.Context, adapter DecoyAdapter, state *State, com
 	case "stop":
 		return adapter.Stop(ctx)
 	case "apply_profile":
-		if state.Config == nil || command.TargetProfileID == nil || command.TargetRevision == nil {
+		config := state.ConfigSnapshot()
+		if config == nil || command.TargetProfileID == nil || command.TargetRevision == nil {
 			return fmt.Errorf("target profile configuration is unavailable")
 		}
-		if state.Config.ProfileID != *command.TargetProfileID || state.Config.Revision != *command.TargetRevision {
+		if config.ProfileID != *command.TargetProfileID || config.Revision != *command.TargetRevision {
 			return fmt.Errorf("desired configuration %s revision %d is not loaded", *command.TargetProfileID, *command.TargetRevision)
 		}
-		return adapter.ApplyConfiguration(ctx, *state.Config)
+		return adapter.ApplyConfiguration(ctx, *config)
 	default:
 		return fmt.Errorf("unsupported command type %q", command.Type)
 	}

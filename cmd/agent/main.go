@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +21,10 @@ func main() {
 	enrollmentToken := flag.String("enrollment-token", "", "one-time enrollment token (required only for first enrollment)")
 	statePath := flag.String("state", defaultStatePath(), "private path for persistent agent credentials and config")
 	queuePath := flag.String("queue", defaultQueuePath(), "private SQLite path for pending telemetry")
+	ipcListen := flag.String("ipc-listen", envOr("HF_AGENT_IPC_LISTEN", "127.0.0.1:9101"), "private listener for decoy telemetry")
+	ipcToken := flag.String("ipc-token", os.Getenv("HF_DECOY_AGENT_IPC_TOKEN"), "shared secret for local decoy-to-agent telemetry IPC")
+	decoyToken := flag.String("decoy-token", os.Getenv("HF_AGENT_DECOY_IPC_TOKEN"), "shared secret for local agent-to-decoy administration")
+	decoyURL := flag.String("decoy-admin", os.Getenv("HF_DECOY_ADMIN_URL"), "private decoy administration URL")
 	flag.Parse()
 
 	if *centerURL == "" {
@@ -57,11 +62,25 @@ func main() {
 		log.Fatal("agent is already enrolled; do not pass enrollment credentials again")
 	}
 
+	var ipcServer *http.Server
+	if *ipcToken != "" {
+		ipcServer = &http.Server{Addr: *ipcListen, Handler: agent.IPCHandler(queue, state, *ipcToken), ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			log.Printf("agent telemetry IPC listening on %s", *ipcListen)
+			if serveErr := ipcServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				log.Printf("agent telemetry IPC stopped: %v", serveErr)
+				stop()
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = ipcServer.Shutdown(shutdownCtx)
+		}()
+	}
+
 	if err = syncConfig(ctx, client, state, *statePath); err != nil {
 		log.Printf("initial configuration sync failed: %v", err)
-	}
-	if err = sendHeartbeat(ctx, client, state); err != nil {
-		log.Printf("initial heartbeat failed: %v", err)
 	}
 	syncTicker := time.NewTicker(2 * time.Second)
 	heartbeatTicker := time.NewTicker(5 * time.Second)
@@ -73,20 +92,59 @@ func main() {
 	defer commandTicker.Stop()
 	var metrics agent.DeliveryMetrics
 	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
+	if *decoyURL != "" {
+		if *decoyToken == "" {
+			log.Fatal("HF_AGENT_DECOY_IPC_TOKEN is required when decoy administration is enabled")
+		}
+		adapter, err = agent.NewHTTPDecoyAdapter(*decoyURL, *decoyToken)
+		if err != nil {
+			log.Fatalf("configure decoy adapter: %v", err)
+		}
+		if config := state.ConfigSnapshot(); config != nil {
+			applyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			applyErr := adapter.ApplyConfiguration(applyCtx, *config)
+			cancel()
+			if applyErr != nil {
+				log.Printf("initial decoy configuration apply failed: %v", applyErr)
+			} else if startErr := adapter.Start(ctx); startErr != nil {
+				log.Printf("initial decoy start failed: %v", startErr)
+			}
+			if ipcServer == nil {
+				log.Printf("decoy commands are enabled but the event IPC token is missing")
+			}
+		}
+	}
+	if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
+		log.Printf("initial heartbeat failed: %v", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-syncTicker.C:
+			previous := state.ConfigSnapshot()
 			if err = syncConfig(ctx, client, state, *statePath); err != nil {
 				log.Printf("configuration sync failed: %v", err)
 				continue
 			}
-			log.Printf("desired configuration is revision %d for trap %s", state.Config.Revision, state.TrapID)
-			syncTicker.Reset(time.Duration(state.Config.Config.Channel.SyncSeconds) * time.Second)
-			heartbeatTicker.Reset(time.Duration(state.Config.Config.Channel.HeartbeatSeconds) * time.Second)
+			config := state.ConfigSnapshot()
+			if config == nil {
+				log.Printf("configuration sync returned no configuration")
+				continue
+			}
+			if *decoyURL != "" && (previous == nil || previous.ProfileID != config.ProfileID || previous.Revision != config.Revision) {
+				applyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+				applyErr := adapter.ApplyConfiguration(applyCtx, *config)
+				cancel()
+				if applyErr != nil {
+					log.Printf("apply updated decoy configuration: %v", applyErr)
+				}
+			}
+			log.Printf("desired configuration is revision %d for trap %s", config.Revision, state.TrapID)
+			syncTicker.Reset(time.Duration(config.Config.Channel.SyncSeconds) * time.Second)
+			heartbeatTicker.Reset(time.Duration(config.Config.Channel.HeartbeatSeconds) * time.Second)
 		case <-heartbeatTicker.C:
-			if err = sendHeartbeat(ctx, client, state); err != nil {
+			if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
 				log.Printf("heartbeat failed: %v", err)
 			}
 		case <-deliveryTicker.C:
@@ -112,14 +170,29 @@ func syncConfig(ctx context.Context, client *agent.Client, state *agent.State, s
 	if err != nil {
 		return err
 	}
-	state.Config = config
+	previous := state.ConfigSnapshot()
+	state.SetConfig(config)
+	if previous != nil && previous.ProfileID == config.ProfileID && previous.Revision == config.Revision {
+		return nil
+	}
 	return agent.SaveState(statePath, state)
 }
 
-func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State) error {
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return client.Heartbeat(requestCtx, state, "unknown")
+	serviceState, err := adapter.ServiceState(requestCtx)
+	if err != nil {
+		serviceState = "error"
+	}
+	return client.Heartbeat(requestCtx, state, serviceState)
 }
 
 func defaultStatePath() string {
