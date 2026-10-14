@@ -191,6 +191,7 @@ function mapTrap(t: any): Trap {
     last_seen_at: seen,
     agent_status: agentStatus,
     service_status: t.service_status || 'unknown',
+    telemetry: t.telemetry || undefined,
     attacks_count_24h: 0,
     deployment_bindings: t.deployment_bindings || [],
     created_at: t.created_at,
@@ -335,6 +336,12 @@ export const api = {
   },
 
   profiles: {
+    async rotateCredentials(id: string, baseRevision: number, name: string, description: string, config: ProfileConfig): Promise<ProfileRevision> {
+      const result = await request<{ revision: ProfileRevision }>(`/api/v1/profiles/${encodeURIComponent(id)}`, {
+        method: 'PATCH', body: JSON.stringify({ base_revision: baseRevision, name, description, config }),
+      });
+      return result.revision;
+    },
     async revision(id: string, revision: number): Promise<ProfileRevision> {
       if (isDevModeActive()) {
         const items = await api.profiles.revisions(id);
@@ -570,7 +577,7 @@ export const api = {
         items.push(...(page.items || []));
         cursor = page.next_cursor || '';
       } while (cursor);
-      return items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, 10);
+      return items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
     },
     async downloadBundle(trapId: string): Promise<void> {
       if (isDevModeActive()) throw new ApiRequestError('Комплект доступен только через настоящий API', 409, 'demo_mode');
