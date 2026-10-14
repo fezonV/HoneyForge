@@ -53,14 +53,16 @@ export class ApiRequestError extends Error {
 
 // Dev fixtures mode state
 const DEV_FIXTURES_KEY = 'honeyforge_dev_fixtures_enabled';
-let isDevFixturesEnabled = localStorage.getItem(DEV_FIXTURES_KEY) !== 'false';
+let isDevFixturesEnabled = import.meta.env.DEV && localStorage.getItem(DEV_FIXTURES_KEY) === 'true';
 
 export function isDevModeActive(): boolean {
   return isDevFixturesEnabled;
 }
 
 export function setDevModeActive(active: boolean) {
-  isDevFixturesEnabled = active;
+  isDevFixturesEnabled = import.meta.env.DEV && active;
+  cachedCsrfToken = null;
+  profileRevisionCache.clear();
   localStorage.setItem(DEV_FIXTURES_KEY, active ? 'true' : 'false');
   window.dispatchEvent(new Event('honeyforge-devmode-changed'));
 }
@@ -84,7 +86,8 @@ function getCsrfToken(): string | null {
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
-  timeoutMs: number = 10000
+  timeoutMs: number = 10000,
+  responseType: 'json' | 'blob' = 'json'
 ): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -109,12 +112,16 @@ async function request<T>(
       signal: options.signal || controller.signal,
     });
 
-    clearTimeout(timeoutId);
-
     if (response.status === 204) {
       return {} as T;
     }
 
+    if (response.ok && responseType === 'blob') {
+      if (!response.headers.get('Content-Type')?.includes('application/zip')) {
+        throw new ApiRequestError('Сервер вернул некорректный комплект запуска', 502, 'invalid_bundle');
+      }
+      return await response.blob() as T;
+    }
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
@@ -146,14 +153,15 @@ async function request<T>(
 
     return data as T;
   } catch (error: any) {
-    clearTimeout(timeoutId);
     if (error instanceof ApiRequestError) {
       throw error;
     }
     if (error.name === 'AbortError') {
-      throw new ApiRequestError('Превышено время ожидания ответа сервера (10 сек)', 504, 'TIMEOUT', undefined, true);
+      throw new ApiRequestError(`Превышено время ожидания ответа сервера (${timeoutMs / 1000} сек)`, 504, 'TIMEOUT', undefined, true);
     }
-    throw new ApiRequestError('Сетевой сбой при обращении к серверу управления (127.0.0.1:8081)', 0, 'NETWORK_ERROR', undefined, true);
+    throw new ApiRequestError('Нет связи с сервером управления', 0, 'NETWORK_ERROR', undefined, true);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -300,35 +308,47 @@ export const api = {
         };
       }
 
-      try {
-        const [trapsPage, auditPage] = await Promise.all([
-          request<Page<any>>('/api/v1/traps').catch(() => ({ items: [] })),
-          request<Page<any>>('/api/v1/audit').catch(() => ({ items: [] })),
-        ]);
-
-        const traps = trapsPage.items || [];
-        const onlineCount = traps.filter((t: any) => t.agent_status === 'online').length;
-        const lowCount = traps.filter((t: any) => t.desired_revision === 1 || !t.desired_profile_id).length;
-        const medCount = traps.length - lowCount;
-
-        return {
-          total_traps: traps.length,
-          traps_low: lowCount,
-          traps_medium: medCount,
-          traps_high: 0,
-          online_traps: onlineCount,
-          events_24h: 1200 + auditPage.items.length * 15,
-          events_delta_percent: 12.5,
-          unique_attackers_24h: 280,
-          top_attackers: FIXTURE_METRICS.top_attackers,
-        };
-      } catch {
-        return FIXTURE_METRICS;
-      }
+      const now = new Date();
+      const period = new URLSearchParams({ from: new Date(now.getTime() - 86400000).toISOString(), to: now.toISOString() });
+      const [traps, profiles, summary] = await Promise.all([
+        api.traps.list(), api.profiles.list(), request<{
+          total_events: number; unique_sources: number;
+          top_sources: Array<{ source_ip: string; count: number; source_country_name?: string }>;
+        }>(`/api/v1/events/summary?${period}`),
+      ]);
+      const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+      return {
+        total_traps: traps.length,
+        traps_low: traps.filter((trap) => byId.get(trap.profile_id || '')?.level === 'low').length,
+        traps_medium: traps.filter((trap) => byId.get(trap.profile_id || '')?.level === 'medium').length,
+        traps_high: 0,
+        online_traps: traps.filter((trap) => trap.agent_status === 'online').length,
+        events_24h: summary.total_events,
+        unique_attackers_24h: summary.unique_sources,
+        top_attackers: summary.top_sources.map((source) => ({
+          ip: source.source_ip, country: source.source_country_name || '—', events_count: source.count,
+          share_percent: summary.total_events ? source.count / summary.total_events * 100 : 0,
+        })),
+      };
     },
   },
 
   profiles: {
+    async revision(id: string, revision: number): Promise<ProfileRevision> {
+      if (isDevModeActive()) {
+        const items = await api.profiles.revisions(id);
+        const found = items.find((item) => item.revision === revision);
+        if (!found) throw new ApiRequestError('Версия профиля недоступна', 404, 'not_found');
+        return found;
+      }
+      const key = `${id}:${revision}`;
+      let result = profileRevisionCache.get(key);
+      if (!result) {
+        result = await request<ProfileRevision>(`/api/v1/profiles/${encodeURIComponent(id)}/revisions/${revision}`);
+        profileRevisionCache.set(key, result);
+      }
+      return result;
+    },
     async revisions(id: string): Promise<ProfileRevision[]> {
       if (isDevModeActive()) {
         const profile = mockProfiles.find((p) => p.id === id);
@@ -508,7 +528,7 @@ export const api = {
           id: prof.id,
           name: prof.name,
           description: prof.description || '',
-          level: prof.level || 'low',
+          level: res.revision?.config?.level || 'low',
           revision: prof.current_revision || 1,
           services: res.revision?.config?.services || [],
           masking: {
@@ -538,6 +558,16 @@ export const api = {
   },
 
   traps: {
+    async downloadBundle(trapId: string): Promise<void> {
+      if (isDevModeActive()) throw new ApiRequestError('Комплект доступен только через настоящий API', 409, 'demo_mode');
+      const artifact = await request<Blob>(`/api/v1/traps/${encodeURIComponent(trapId)}/bundle`, {}, 30000, 'blob');
+      const url = URL.createObjectURL(artifact);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `honeyforge-trap-${trapId}.zip`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
     async list(): Promise<Trap[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));
@@ -672,9 +702,21 @@ export const api = {
       const query = new URLSearchParams();
       if (params.limit) query.set('limit', String(params.limit));
       if (params.trap_id) query.set('trap_id', params.trap_id);
-      if (params.severity) query.set('severity', params.severity);
-      const page = await request<Page<AttackEvent>>(`/api/v1/events?${query.toString()}`);
-      return page.items || [];
+      const [page, traps, profiles] = await Promise.all([
+        request<Page<{ event_id: string; timestamp: string; trap_id: string; profile_id?: string; event_type: AttackEvent['event_type']; source_ip?: string; source_port?: number; destination_port?: number; protocol: string; payload?: AttackEvent['payload'] }>>(`/api/v1/events?${query}`),
+        api.traps.list(), api.profiles.list(),
+      ]);
+      const byTrap = new Map(traps.map((trap) => [trap.id, trap]));
+      const byProfile = new Map(profiles.map((profile) => [profile.id, profile]));
+      const items: AttackEvent[] = (page.items || []).map((event) => ({
+        id: event.event_id, occurred_at: event.timestamp, trap_id: event.trap_id,
+        trap_name: byTrap.get(event.trap_id)?.name || event.trap_id,
+        level: byProfile.get(event.profile_id || '')?.level || 'low',
+        event_type: event.event_type, source_ip: event.source_ip || '—', source_port: event.source_port,
+        destination_port: event.destination_port || 0, protocol: event.protocol,
+        payload: event.payload || {}, severity: 'info',
+      }));
+      return params.severity ? items.filter((event) => event.severity === params.severity) : items;
     },
   },
 

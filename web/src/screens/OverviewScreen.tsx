@@ -116,7 +116,7 @@ export const OverviewScreen: React.FC = () => {
               </span>
               <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium mt-1">
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>+{metrics.events_delta_percent}% по сравнению со вчерашним днем</span>
+                <span>{metrics.events_delta_percent === undefined ? 'За последние 24 часа' : `${metrics.events_delta_percent}% по сравнению со вчерашним днем`}</span>
               </div>
             </div>
             <div className="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500">

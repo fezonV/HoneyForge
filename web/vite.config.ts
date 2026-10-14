@@ -11,13 +11,6 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8081',
         changeOrigin: true,
-        secure: false,
-        headers: {
-          Origin: 'http://127.0.0.1:8081',
-        },
-      },
-      '/ws': {
-        target: 'ws://127.0.0.1:8081',
         ws: true,
       },
     },

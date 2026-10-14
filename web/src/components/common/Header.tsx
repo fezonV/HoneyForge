@@ -108,7 +108,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Dev mode switch badge: rounded-md */}
-            <button
+            {import.meta.env.DEV && <button
               onClick={toggleDevMode}
               className={`text-xs px-2.5 py-1.5 rounded-md font-medium border transition-colors ${
                 isDevMode
@@ -118,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
               title="Нажмите для переключения между фикстурами и реальным API"
             >
               {isDevMode ? '⚠️ Фикстуры BE-01' : 'Боевой API'}
-            </button>
+            </button>}
 
             {/* Role indicator: rounded-md */}
             {role && (

@@ -14,8 +14,8 @@ import { Button } from '../components/common/Button';
 
 export const LoginScreen: React.FC = () => {
   const { login, isLoading, isDevMode, toggleDevMode } = useAuth();
-  const [username, setUsername] = useState<string>('soc_operator');
-  const [password, setPassword] = useState<string>('HoneyForge2026!');
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isBackendError, setIsBackendError] = useState<boolean>(false);
@@ -76,7 +76,7 @@ export const LoginScreen: React.FC = () => {
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 shadow-sm rounded-xl border border-slate-200 sm:px-10">
           {/* Mode Switcher Bar */}
-          <div className="mb-5 p-3 rounded-lg border flex items-center justify-between text-xs transition-colors bg-slate-50 border-slate-200">
+          {import.meta.env.DEV && <div className="mb-5 p-3 rounded-lg border flex items-center justify-between text-xs transition-colors bg-slate-50 border-slate-200">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4 text-slate-500" />
               <div>
@@ -97,7 +97,7 @@ export const LoginScreen: React.FC = () => {
             >
               {isDevMode ? 'Переключить на API' : 'Включить фикстуры'}
             </button>
-          </div>
+          </div>}
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             {errorMessage && (
@@ -107,10 +107,10 @@ export const LoginScreen: React.FC = () => {
                   <span className="font-medium">{errorMessage}</span>
                 </div>
 
-                {isBackendError && (
+                {import.meta.env.DEV && isBackendError && (
                   <div className="pt-2 border-t border-rose-200/80">
                     <p className="text-[11px] text-rose-700 mb-2">
-                      Бэкенд-сервер на <code>127.0.0.1:8000</code> пока не запущен. Для автономной проверки интерфейса включите фикстуры:
+                      Сервер управления недоступен. Для автономной проверки интерфейса включите фикстуры:
                     </p>
                     <button
                       type="button"
@@ -125,7 +125,7 @@ export const LoginScreen: React.FC = () => {
             )}
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label htmlFor="operator-username" className="block text-xs font-semibold text-slate-700 mb-1">
                 Имя пользователя (Логин)
               </label>
               <div className="relative">
@@ -133,6 +133,8 @@ export const LoginScreen: React.FC = () => {
                   <User className="w-4 h-4" />
                 </div>
                 <input
+                  id="operator-username"
+                  autoComplete="username"
                   type="text"
                   required
                   value={username}
@@ -144,7 +146,7 @@ export const LoginScreen: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+              <label htmlFor="operator-password" className="block text-xs font-semibold text-slate-700 mb-1">
                 Пароль доступа
               </label>
               <div className="relative">
@@ -152,6 +154,8 @@ export const LoginScreen: React.FC = () => {
                   <Lock className="w-4 h-4" />
                 </div>
                 <input
+                  id="operator-password"
+                  autoComplete="current-password"
                   type="password"
                   required
                   value={password}
@@ -175,7 +179,7 @@ export const LoginScreen: React.FC = () => {
           </form>
 
           {/* Quick preset credentials for demo & evaluation */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
+          {import.meta.env.DEV && <div className="mt-6 pt-5 border-t border-slate-100">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2 text-center">
               Демо-учётные записи хакатона:
             </span>
@@ -197,7 +201,7 @@ export const LoginScreen: React.FC = () => {
                 <div className="text-[11px] text-slate-500">Роль: Viewer (аудит)</div>
               </button>
             </div>
-          </div>
+          </div>}
 
           <div className="mt-5 text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
             <Info className="w-3.5 h-3.5 text-slate-400" />

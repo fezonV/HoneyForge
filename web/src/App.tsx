@@ -14,7 +14,7 @@ import { Loader2 } from 'lucide-react';
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, role } = useAuth();
   const [currentTab, setCurrentTab] = useState<NavTab>('overview');
-  const [wsStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
+  const [wsStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
 
   // URL hash sync for browser back/forward and direct tab links
   useEffect(() => {

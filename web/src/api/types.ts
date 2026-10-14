@@ -192,7 +192,7 @@ export interface OverviewMetrics {
   traps_high: number;
   online_traps: number;
   events_24h: number;
-  events_delta_percent: number;
+  events_delta_percent?: number;
   unique_attackers_24h: number;
   top_attackers: Array<{
     ip: string;
