@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,48 @@ func TestNewClientRequiresHTTPSOrigin(t *testing.T) {
 	}
 }
 
+func TestNewClientWithCAValidatesPrivateCenterCertificate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+
+	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	caPath := filepath.Join(t.TempDir(), "center-ca.pem")
+	if err := os.WriteFile(caPath, certificatePEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	trusted, err := NewClientWithCA(server.URL, caPath)
+	if err != nil {
+		t.Fatalf("configure private CA trust: %v", err)
+	}
+	response, err := trusted.http.Get(server.URL)
+	if err != nil {
+		t.Fatalf("trusted center certificate rejected: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("trusted center status=%d", response.StatusCode)
+	}
+	untrusted, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = untrusted.http.Get(server.URL)
+	if err == nil {
+		response.Body.Close()
+		t.Fatal("unknown center certificate was trusted")
+	}
+}
+
+func TestNewClientWithCARejectsMalformedBundle(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "broken-ca.pem")
+	if err := os.WriteFile(caPath, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewClientWithCA("https://center.example", caPath); err == nil {
+		t.Fatal("malformed CA bundle was accepted")
+	}
+}
+
 func TestEnrollAndFetchConfig(t *testing.T) {
 	const trapID = "11111111-1111-4111-8111-111111111111"
 	const agentID = "22222222-2222-4222-8222-222222222222"
@@ -44,7 +87,7 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 			_, _ = w.Write([]byte(`{"agent_id":"` + agentID + `","trap_id":"` + trapID + `","agent_token":"long-lived-secret"}`))
 		case "/agent/v1/traps/" + trapID + "/config":
 			gotAuth = r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"http-archive-low","level":"low","services":[],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":[]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":2}}}`))
+			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"low-http","level":"low","services":[{"id":"web","name":"Web","protocol":"http","port":8080}],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":["http.request"]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":2}}}`))
 		case "/agent/v1/traps/" + trapID + "/heartbeat":
 			gotAuth = r.Header.Get("Authorization")
 			var request map[string]string
@@ -55,6 +98,9 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 				t.Errorf("unexpected heartbeat body: %#v", request)
 			}
 			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","agent_status":"online","service_status":"running","last_seen":"2026-10-12T00:00:00Z"}`))
+		case "/agent/v1/traps/" + trapID + "/events":
+			gotAuth = r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"accepted_ids":["44444444-4444-4444-8444-444444444444"],"duplicate_ids":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -81,6 +127,11 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 	if gotAuth != "Bearer long-lived-secret" {
 		t.Fatalf("heartbeat auth = %q", gotAuth)
 	}
+	event := queueEvent("44444444-4444-4444-8444-444444444444")
+	result, err := client.SendEvents(context.Background(), state, []contracts.Event{event})
+	if err != nil || len(result.AcceptedIDs) != 1 || gotAuth != "Bearer long-lived-secret" {
+		t.Fatalf("SendEvents result=%+v auth=%q err=%v", result, gotAuth, err)
+	}
 }
 
 func TestFetchConfigRejectsCrossTrapResponse(t *testing.T) {
@@ -92,6 +143,19 @@ func TestFetchConfigRejectsCrossTrapResponse(t *testing.T) {
 	_, err := client.FetchConfig(context.Background(), &State{TrapID: "my-trap", Token: "secret"})
 	if err == nil || !strings.Contains(err.Error(), "invalid configuration") {
 		t.Fatalf("FetchConfig error = %v, want cross-trap rejection", err)
+	}
+}
+
+func TestFetchConfigRejectsInvalidProfileConfiguration(t *testing.T) {
+	const trapID = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"low-http","level":"low","services":[{"id":"web","name":"Web","protocol":"http","port":8080}],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":["http.request"]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":0}}}`))
+	}))
+	defer server.Close()
+	client := &Client{baseURL: server.URL, http: server.Client()}
+	_, err := client.FetchConfig(context.Background(), &State{TrapID: trapID, Token: "secret"})
+	if err == nil || !strings.Contains(err.Error(), "invalid configuration") {
+		t.Fatalf("FetchConfig error = %v, want invalid configuration rejection", err)
 	}
 }
 
@@ -123,6 +187,9 @@ func TestLoadStateRejectsBroadPermissions(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte(`{"agent_id":"a","trap_id":"t","agent_token":"s"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadState(path); err == nil || !strings.Contains(err.Error(), "permissions") {

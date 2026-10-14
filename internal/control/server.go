@@ -27,15 +27,24 @@ import (
 )
 
 type Config struct {
-	PublicOrigin string
-	CookieSecure bool
+	PublicOrigin           string
+	CookieSecure           bool
+	GeoResolver            GeoResolver
+	AgentOrigin            string
+	BundleSourceRepository string
+	BundleSourceRevision   string
 }
 type Server struct {
-	db     *pgxpool.Pool
-	origin string
-	secure bool
-	mu     sync.Mutex
-	logins map[string][]time.Time
+	db             *pgxpool.Pool
+	origin         string
+	agentOrigin    string
+	bundleSource   string
+	bundleRevision string
+	secure         bool
+	geo            GeoResolver
+	ws             *wsHub
+	mu             sync.Mutex
+	logins         map[string][]time.Time
 }
 type ctxKey string
 
@@ -60,7 +69,7 @@ type apiFailure struct {
 }
 
 func New(db *pgxpool.Pool, cfg Config) *Server {
-	return &Server{db: db, origin: strings.TrimRight(cfg.PublicOrigin, "/"), secure: cfg.CookieSecure, logins: map[string][]time.Time{}}
+	return &Server{db: db, origin: strings.TrimRight(cfg.PublicOrigin, "/"), agentOrigin: strings.TrimRight(cfg.AgentOrigin, "/"), bundleSource: cfg.BundleSourceRepository, bundleRevision: cfg.BundleSourceRevision, secure: cfg.CookieSecure, geo: cfg.GeoResolver, ws: newWSHub(), logins: map[string][]time.Time{}}
 }
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
@@ -93,11 +102,22 @@ func (s *Server) Handler() http.Handler {
 	m.Handle("DELETE /api/v1/traps/{id}/profile", s.auth(true, "operator", http.HandlerFunc(s.detachProfile)))
 	m.Handle("DELETE /api/v1/traps/{id}", s.auth(true, "operator", http.HandlerFunc(s.deleteTrap)))
 	m.Handle("POST /api/v1/traps/{id}/enrollment-token", s.auth(true, "operator", http.HandlerFunc(s.createEnrollment)))
+	m.Handle("GET /api/v1/traps/{id}/bundle", s.auth(false, "operator", http.HandlerFunc(s.downloadTrapBundle)))
 	m.Handle("POST /api/v1/traps/{id}/commands", s.auth(true, "operator", http.HandlerFunc(s.queueCommand)))
 	m.Handle("GET /api/v1/traps/{id}/commands", s.auth(false, "", http.HandlerFunc(s.listCommands)))
+	m.Handle("GET /api/v1/events", s.auth(false, "", http.HandlerFunc(s.listEvents)))
+	m.Handle("GET /api/v1/events/summary", s.auth(false, "", http.HandlerFunc(s.eventSummary)))
+	m.Handle("GET /api/v1/events/export.csv", s.auth(false, "operator", http.HandlerFunc(s.exportEventsCSV)))
+	m.Handle("GET /api/v1/traps/{trap_id}/events/{event_id}", s.auth(false, "", http.HandlerFunc(s.getEvent)))
+	m.Handle("GET /api/v1/traps/{trap_id}/events/{event_id}/sensitive", s.auth(false, "operator", http.HandlerFunc(s.getSensitiveEvent)))
+	m.Handle("GET /api/v1/sessions/{id}/timeline", s.auth(false, "", http.HandlerFunc(s.getSessionTimeline)))
+	m.Handle("GET /api/v1/ws", s.websocketOrigin(s.auth(false, "", http.HandlerFunc(s.websocket))))
 	m.Handle("GET /api/v1/audit", s.auth(false, "operator", http.HandlerFunc(s.listAudit)))
 	m.HandleFunc("POST /agent/v1/enroll", s.enroll)
 	m.HandleFunc("POST /agent/v1/traps/{id}/heartbeat", s.agentHeartbeat)
+	m.HandleFunc("POST /agent/v1/traps/{id}/events", s.agentEvents)
+	m.HandleFunc("GET /agent/v1/traps/{id}/commands", s.agentCommands)
+	m.HandleFunc("POST /agent/v1/traps/{id}/commands/{command_id}", s.agentCommandResult)
 	m.HandleFunc("GET /agent/v1/traps/{id}/config", s.agentConfig)
 	return s.requestIDs(m)
 }
@@ -424,6 +444,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if err = tx.Commit(ctx); err != nil {
 		fail(w, r, 503, "not_ready", "authentication service unavailable", nil)
 		return
+	}
+	if s.ws != nil {
+		s.ws.closeSession(a.session)
 	}
 	expireCookie(w, "hf_session", s.secure, true)
 	expireCookie(w, "csrf_token", s.secure, false)

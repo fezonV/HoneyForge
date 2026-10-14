@@ -1,8 +1,17 @@
 .git
 .env
+.env.*
+deploy/secrets
+geoip
+*.mmdb
 HONEYFORGE_FULL_PLAN.md
 *.exe
 *.test
 coverage.out
 node_modules
 dist
+docs
+examples
+tools
+archive.html
+dashboard.html

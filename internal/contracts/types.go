@@ -102,6 +102,7 @@ type Trap struct {
 	AppliedRevision    *int                `json:"applied_revision"`
 	AgentStatus        string              `json:"agent_status"`
 	ServiceStatus      string              `json:"service_status"`
+	Telemetry          *AgentTelemetry     `json:"telemetry,omitempty"`
 	LastSeen           *string             `json:"last_seen,omitempty"`
 	DeploymentBindings []DeploymentBinding `json:"deployment_bindings"`
 	CreatedAt          string              `json:"created_at"`
@@ -120,6 +121,20 @@ type Agent struct {
 	CreatedAt string  `json:"created_at"`
 	LastSeen  *string `json:"last_seen,omitempty"`
 }
+type AgentTelemetry struct {
+	QueueDepth       int    `json:"queue_depth"`
+	QueueLimit       int    `json:"queue_limit"`
+	Quarantined      int    `json:"quarantined"`
+	QuarantineReason string `json:"quarantine_reason,omitempty"`
+	SentEvents       int64  `json:"sent_events"`
+	DeliveryErrors   int64  `json:"delivery_errors"`
+	DeliveryRetries  int64  `json:"delivery_retries"`
+	StorageErrors    int64  `json:"storage_errors"`
+	StorageError     string `json:"storage_error,omitempty"`
+	DeliveryError    string `json:"delivery_error,omitempty"`
+	Degraded         bool   `json:"degraded"`
+}
+
 type Command struct {
 	ID                string  `json:"id"`
 	TrapID            string  `json:"trap_id"`
@@ -129,6 +144,7 @@ type Command struct {
 	TargetProfileID   *string `json:"target_profile_id,omitempty"`
 	TargetRevision    *int    `json:"target_revision,omitempty"`
 	Status            string  `json:"status"`
+	Error             string  `json:"error,omitempty"`
 	ExpiresAt         string  `json:"expires_at"`
 	CreatedAt         string  `json:"created_at"`
 }
@@ -154,6 +170,58 @@ type Event struct {
 	DestinationPort int            `json:"destination_port,omitempty"`
 	Protocol        string         `json:"protocol"`
 	Payload         map[string]any `json:"payload"`
+}
+
+// EventRecord is the operator-facing event representation. Payload values are
+// redacted unless the caller uses the audited sensitive-event endpoint.
+type EventRecord struct {
+	EventID           string         `json:"event_id"`
+	TrapID            string         `json:"trap_id"`
+	AgentID           string         `json:"agent_id"`
+	ServiceID         string         `json:"service_id"`
+	SessionID         *string        `json:"session_id,omitempty"`
+	ProfileID         *string        `json:"profile_id,omitempty"`
+	AppliedRevision   *int           `json:"applied_revision,omitempty"`
+	EventType         string         `json:"event_type"`
+	Timestamp         string         `json:"timestamp"`
+	ReceivedAt        string         `json:"received_at"`
+	SourceIP          *string        `json:"source_ip,omitempty"`
+	SourceCountryCode *string        `json:"source_country_code,omitempty"`
+	SourceCountryName *string        `json:"source_country_name,omitempty"`
+	SourceASN         *int64         `json:"source_asn,omitempty"`
+	SourceASNOrg      *string        `json:"source_asn_org,omitempty"`
+	GeoSource         *string        `json:"geo_source,omitempty"`
+	GeoVersion        *string        `json:"geo_version,omitempty"`
+	SourcePort        *int           `json:"source_port,omitempty"`
+	DestinationPort   *int           `json:"destination_port,omitempty"`
+	Protocol          string         `json:"protocol"`
+	Payload           map[string]any `json:"payload"`
+	PayloadRedacted   bool           `json:"payload_redacted"`
+}
+type EventTypeCount struct {
+	EventType string `json:"event_type"`
+	Count     int64  `json:"count"`
+}
+type EventSourceCount struct {
+	SourceIP          string  `json:"source_ip"`
+	Count             int64   `json:"count"`
+	SourceCountryCode *string `json:"source_country_code,omitempty"`
+	SourceCountryName *string `json:"source_country_name,omitempty"`
+	SourceASN         *int64  `json:"source_asn,omitempty"`
+	SourceASNOrg      *string `json:"source_asn_org,omitempty"`
+}
+type EventSummary struct {
+	From          string             `json:"from"`
+	To            string             `json:"to"`
+	TotalEvents   int64              `json:"total_events"`
+	UniqueSources int64              `json:"unique_sources"`
+	ByEventType   []EventTypeCount   `json:"by_event_type"`
+	TopSources    []EventSourceCount `json:"top_sources"`
+}
+type SessionTimeline struct {
+	Session    VisitorSession `json:"session"`
+	Items      []EventRecord  `json:"items"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 type VisitorSession struct {
 	ID        string  `json:"id"`

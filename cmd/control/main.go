@@ -24,12 +24,14 @@ import (
 	"honeyforge/migrations"
 )
 
+var buildRevision = "unknown"
+
 func main() {
 	createUser := flag.Bool("create-user", false, "create a new operator account and exit")
 	flag.Parse()
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+	databaseURL, err := resolveDatabaseURL(os.Getenv("DATABASE_URL"), os.Getenv("DATABASE_URL_FILE"))
+	if err != nil {
+		log.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -50,6 +52,14 @@ func main() {
 		}
 		return
 	}
+	geoResolver, err := control.OpenMaxMindGeoResolver(os.Getenv("GEOIP_CITY_DB"), os.Getenv("GEOIP_ASN_DB"), os.Getenv("GEOIP_SOURCE"), os.Getenv("GEOIP_VERSION"))
+	if err != nil {
+		log.Fatalf("configure local GeoIP enrichment: %v", err)
+	}
+	defer geoResolver.Close()
+	if geoResolver != nil {
+		log.Printf("GeoIP enrichment enabled: source=%s version=%s", os.Getenv("GEOIP_SOURCE"), os.Getenv("GEOIP_VERSION"))
+	}
 	addr := env("LISTEN_ADDR", "127.0.0.1:8081")
 	origin := strings.TrimRight(env("PUBLIC_ORIGIN", "http://127.0.0.1:8081"), "/")
 	parsedOrigin, err := url.Parse(origin)
@@ -69,7 +79,14 @@ func main() {
 	if !secure && (parsedOrigin.Scheme != "http" || !loopback) {
 		log.Fatal("COOKIE_SECURE=false is allowed only for loopback PUBLIC_ORIGIN")
 	}
-	server := &http.Server{Addr: addr, Handler: control.New(db, control.Config{PublicOrigin: origin, CookieSecure: secure}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	server := &http.Server{Addr: addr, Handler: control.New(db, control.Config{
+		PublicOrigin:           origin,
+		CookieSecure:           secure,
+		GeoResolver:            geoResolver,
+		AgentOrigin:            env("AGENT_ORIGIN", ""),
+		BundleSourceRepository: env("HF_BUNDLE_SOURCE_REPOSITORY", "https://github.com/fezonV/HoneyForge.git"),
+		BundleSourceRevision:   env("HF_SOURCE_REVISION", buildRevision),
+	}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -83,6 +100,22 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+func resolveDatabaseURL(value, filePath string) (string, error) {
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil || len(data) > 16*1024 {
+			return "", errors.New("DATABASE_URL_FILE is unavailable or too large")
+		}
+		value = string(data)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("DATABASE_URL or DATABASE_URL_FILE is required")
+	}
+	return value, nil
+}
+
 func provisionUser(ctx context.Context, db *pgxpool.Pool) error {
 	username := strings.TrimSpace(os.Getenv("HF_USERNAME"))
 	role := os.Getenv("HF_ROLE")

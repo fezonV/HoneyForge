@@ -1,9 +1,12 @@
 package control
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -357,7 +360,76 @@ func TestControlPostgresFoundation(t *testing.T) {
 	if heartbeatRes.Code != 200 || !strings.Contains(heartbeatRes.Body.String(), `"agent_status":"online"`) || !strings.Contains(heartbeatRes.Body.String(), `"service_status":"running"`) {
 		t.Fatalf("agent heartbeat=%d %s", heartbeatRes.Code, heartbeatRes.Body.String())
 	}
-	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+	eventBody := fmt.Sprintf(`{"events":[{"schema_version":"1.0","event_id":"44444444-4444-4444-8444-444444444444","trap_id":%q,"agent_id":(SELECT id::text FROM agents WHERE trap_id=%q),"service_id":"web","event_type":"http.request","timestamp":"2026-10-13T00:00:00Z","protocol":"http","payload":{"path":"/"}}]}`, nt.ID, nt.ID)
+	eventsReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(eventBody))
+	eventsReq.Header.Set("Authorization", "Bearer "+agentToken)
+	eventsReq.Header.Set("Content-Type", "application/json")
+	eventsRes := httptest.NewRecorder()
+	h.ServeHTTP(eventsRes, eventsReq)
+	if eventsRes.Code != 400 {
+		t.Fatalf("invalid SQL-shaped event accepted=%d %s", eventsRes.Code, eventsRes.Body.String())
+	}
+	var agentID string
+	if err := db.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1`, nt.ID).Scan(&agentID); err != nil {
+		t.Fatal("read enrolled agent ID", err)
+	}
+	validEventBody := fmt.Sprintf(`{"events":[{"schema_version":"1.0","event_id":"44444444-4444-4444-8444-444444444444","trap_id":%q,"agent_id":%q,"service_id":"web","session_id":null,"profile_id":null,"applied_revision":null,"event_type":"http.request","timestamp":"2026-10-13T00:00:00Z","source_ip":"192.0.2.45","destination_port":80,"protocol":"http","payload":{"path":"/","method":"GET","username":"alice","password":"event-secret"}}]}`, nt.ID, agentID)
+	for attempt := 0; attempt < 2; attempt++ {
+		validReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(validEventBody))
+		validReq.Header.Set("Authorization", "Bearer "+agentToken)
+		validReq.Header.Set("Content-Type", "application/json")
+		validRes := httptest.NewRecorder()
+		h.ServeHTTP(validRes, validReq)
+		if validRes.Code != 200 {
+			t.Fatalf("valid event attempt %d=%d %s", attempt, validRes.Code, validRes.Body.String())
+		}
+		wantID := `"accepted_ids":["44444444-4444-4444-8444-444444444444"]`
+		if attempt == 1 {
+			wantID = `"duplicate_ids":["44444444-4444-4444-8444-444444444444"]`
+		}
+		if !strings.Contains(validRes.Body.String(), wantID) {
+			t.Fatalf("event attempt %d response=%s, want %s", attempt, validRes.Body.String(), wantID)
+		}
+	}
+	conflictingEventBody := strings.Replace(validEventBody, `"timestamp":"2026-10-13T00:00:00Z"`, `"timestamp":"2026-10-13T00:00:01Z"`, 1)
+	conflictReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(conflictingEventBody))
+	conflictReq.Header.Set("Authorization", "Bearer "+agentToken)
+	conflictReq.Header.Set("Content-Type", "application/json")
+	conflictRes := httptest.NewRecorder()
+	h.ServeHTTP(conflictRes, conflictReq)
+	if conflictRes.Code != 409 {
+		t.Fatalf("event ID reuse with different content=%d %s", conflictRes.Code, conflictRes.Body.String())
+	}
+	eventQuery := "/api/v1/events?trap_id=" + nt.ID + "&from=2026-10-12T00%3A00%3A00Z&to=2026-10-14T00%3A00%3A00Z&source_ip=192.0.2.45&event_type=http.request"
+	eventPage := op.request("GET", eventQuery, "", false, true)
+	if eventPage.Code != 200 || !strings.Contains(eventPage.Body.String(), `"payload_redacted":true`) || strings.Contains(eventPage.Body.String(), "event-secret") || strings.Contains(eventPage.Body.String(), "alice") {
+		t.Fatalf("event page did not safely return filtered event=%d %s", eventPage.Code, eventPage.Body.String())
+	}
+	eventSummary := op.request("GET", "/api/v1/events/summary?trap_id="+nt.ID+"&from=2026-10-12T00%3A00%3A00Z&to=2026-10-14T00%3A00%3A00Z", "", false, true)
+	if eventSummary.Code != 200 || !strings.Contains(eventSummary.Body.String(), `"total_events":1`) || !strings.Contains(eventSummary.Body.String(), "192.0.2.45") {
+		t.Fatalf("event summary=%d %s", eventSummary.Code, eventSummary.Body.String())
+	}
+	redactedDetail := op.request("GET", "/api/v1/traps/"+nt.ID+"/events/44444444-4444-4444-8444-444444444444", "", false, true)
+	if redactedDetail.Code != 200 || strings.Contains(redactedDetail.Body.String(), "event-secret") {
+		t.Fatalf("event detail leaked credentials=%d %s", redactedDetail.Code, redactedDetail.Body.String())
+	}
+	viewerSensitive := viewer.request("GET", "/api/v1/traps/"+nt.ID+"/events/44444444-4444-4444-8444-444444444444/sensitive", "", false, true)
+	if viewerSensitive.Code != 403 {
+		t.Fatalf("viewer sensitive event access=%d %s", viewerSensitive.Code, viewerSensitive.Body.String())
+	}
+	operatorSensitive := op.request("GET", "/api/v1/traps/"+nt.ID+"/events/44444444-4444-4444-8444-444444444444/sensitive", "", false, true)
+	if operatorSensitive.Code != 200 || !strings.Contains(operatorSensitive.Body.String(), "event-secret") {
+		t.Fatalf("operator sensitive event access=%d %s", operatorSensitive.Code, operatorSensitive.Body.String())
+	}
+	sensitiveAudit := op.request("GET", "/api/v1/audit?action=event.sensitive_read", "", false, true)
+	if sensitiveAudit.Code != 200 || !strings.Contains(sensitiveAudit.Body.String(), "event.sensitive_read") {
+		t.Fatalf("sensitive event read was not audited=%d %s", sensitiveAudit.Code, sensitiveAudit.Body.String())
+	}
+	csvExport := op.request("GET", "/api/v1/events/export.csv?trap_id="+nt.ID+"&from=2026-10-12T00%3A00%3A00Z&to=2026-10-14T00%3A00%3A00Z", "", false, true)
+	if csvExport.Code != 200 || strings.Contains(csvExport.Body.String(), "event-secret") || !strings.Contains(csvExport.Body.String(), "192.0.2.45") {
+		t.Fatalf("CSV export=%d %s", csvExport.Code, csvExport.Body.String())
+	}
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE trap_id=$1`, nt.ID); err != nil {
 		t.Fatal("revoke heartbeat fixture", err)
 	}
 	revokedHeartbeatReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/heartbeat", strings.NewReader(`{"service_state":"running"}`))
@@ -368,7 +440,7 @@ func TestControlPostgresFoundation(t *testing.T) {
 	if revokedHeartbeatRes.Code != 401 {
 		t.Fatalf("revoked agent heartbeat=%d", revokedHeartbeatRes.Code)
 	}
-	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=NULL WHERE id=$1`, enrollmentResp.AgentID); err != nil {
+	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=NULL WHERE trap_id=$1`, nt.ID); err != nil {
 		t.Fatal("restore heartbeat fixture", err)
 	}
 	wrongBearer := httptest.NewRecorder()
@@ -393,6 +465,35 @@ func TestControlPostgresFoundation(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(reqCommand.Body.Bytes(), &command)
+	fetchAgentCommands := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/agent/v1/traps/"+nt.ID+"/commands", nil)
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		return res
+	}
+	firstDelivery := fetchAgentCommands()
+	if firstDelivery.Code != 200 || !strings.Contains(firstDelivery.Body.String(), `"status":"delivered"`) || !strings.Contains(firstDelivery.Body.String(), command.ID) {
+		t.Fatalf("first agent command delivery=%d %s", firstDelivery.Code, firstDelivery.Body.String())
+	}
+	if repeatedDelivery := fetchAgentCommands(); repeatedDelivery.Code != 200 || strings.Contains(repeatedDelivery.Body.String(), command.ID) {
+		t.Fatalf("command delivered again before lease expired=%d %s", repeatedDelivery.Code, repeatedDelivery.Body.String())
+	}
+	if _, err := db.Exec(ctx, `UPDATE commands SET delivered_at=now()-interval '31 seconds',expires_at=now()-interval '1 second' WHERE id=$1`, command.ID); err != nil {
+		t.Fatal("expire delivered command fixture", err)
+	}
+	expiredResultReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/commands/"+command.ID, strings.NewReader(`{"status":"applied"}`))
+	expiredResultReq.Header.Set("Authorization", "Bearer "+agentToken)
+	expiredResultReq.Header.Set("Content-Type", "application/json")
+	expiredResult := httptest.NewRecorder()
+	h.ServeHTTP(expiredResult, expiredResultReq)
+	if expiredResult.Code != 409 {
+		t.Fatalf("expired command result=%d %s", expiredResult.Code, expiredResult.Body.String())
+	}
+	var commandStatus string
+	if err := db.QueryRow(ctx, `SELECT status FROM commands WHERE id=$1`, command.ID).Scan(&commandStatus); err != nil || commandStatus != "expired" {
+		t.Fatalf("expired command status=%q err=%v", commandStatus, err)
+	}
 	_, err := db.Exec(ctx, `UPDATE commands SET expires_at=now()-interval '1 second' WHERE id=$1`, command.ID)
 	if err != nil {
 		t.Fatal("expire command fixture")
@@ -404,6 +505,32 @@ func TestControlPostgresFoundation(t *testing.T) {
 	filteredCommands := op.request("GET", "/api/v1/traps/"+nt.ID+"/commands?status=expired", "", false, true)
 	if filteredCommands.Code != 200 || !strings.Contains(filteredCommands.Body.String(), command.ID) {
 		t.Fatalf("command status filter=%d %s", filteredCommands.Code, filteredCommands.Body.String())
+	}
+	failedQueue := op.request("POST", "/api/v1/traps/"+nt.ID+"/commands", fmt.Sprintf(`{"type":"start","expected_profile_id":%q,"expected_revision":1,"ttl_seconds":60}`, np.Profile.ID), true, true)
+	if failedQueue.Code != 201 {
+		t.Fatalf("failed-command fixture=%d %s", failedQueue.Code, failedQueue.Body.String())
+	}
+	var failedCommand struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(failedQueue.Body.Bytes(), &failedCommand); err != nil {
+		t.Fatal("decode failed-command fixture", err)
+	}
+	failedDelivery := fetchAgentCommands()
+	if failedDelivery.Code != 200 || !strings.Contains(failedDelivery.Body.String(), failedCommand.ID) {
+		t.Fatalf("failed command delivery=%d %s", failedDelivery.Code, failedDelivery.Body.String())
+	}
+	failedResultReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/commands/"+failedCommand.ID, strings.NewReader(`{"status":"failed","error":"adapter unavailable"}`))
+	failedResultReq.Header.Set("Authorization", "Bearer "+agentToken)
+	failedResultReq.Header.Set("Content-Type", "application/json")
+	failedResult := httptest.NewRecorder()
+	h.ServeHTTP(failedResult, failedResultReq)
+	if failedResult.Code != 200 {
+		t.Fatalf("failed command result=%d %s", failedResult.Code, failedResult.Body.String())
+	}
+	failedList := op.request("GET", "/api/v1/traps/"+nt.ID+"/commands?status=failed", "", false, true)
+	if failedList.Code != 200 || !strings.Contains(failedList.Body.String(), `"error":"adapter unavailable"`) {
+		t.Fatalf("failed command details=%d %s", failedList.Code, failedList.Body.String())
 	}
 	_, err = db.Exec(ctx, `UPDATE traps SET last_seen=now()-interval '21 seconds',agent_status='online' WHERE id=$1`, nt.ID)
 	if err != nil {
@@ -533,6 +660,78 @@ func TestControlPostgresFoundation(t *testing.T) {
 	var count int
 	if err = secondPool.QueryRow(ctx, `SELECT count(*) FROM profiles`).Scan(&count); err != nil || count < 2 {
 		t.Fatalf("data did not persist to new pool: count=%d err=%v", count, err)
+	}
+}
+
+func TestOperatorDownloadsAuditedTrapBundle(t *testing.T) {
+	db, _, cleanup := setupIntegration(t)
+	defer cleanup()
+	ctx := context.Background()
+	hash, err := bcrypt.GenerateFromPassword([]byte("integration-password-12"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(ctx, `INSERT INTO users(id,username,password_hash,role) VALUES($1,'bundle-op',$2,'operator')`, uuid(), string(hash)); err != nil {
+		t.Fatal("seed bundle operator", err)
+	}
+	h := New(db, Config{
+		PublicOrigin: testOrigin, CookieSecure: false, AgentOrigin: "https://center.example.org:9443",
+		BundleSourceRepository: defaultBundleSourceRepository, BundleSourceRevision: strings.Repeat("a", 40),
+	}).Handler()
+	op := &testAPI{t: t, h: h}
+	op.login("bundle-op", "integration-password-12")
+	profileResponse := op.request(http.MethodPost, "/api/v1/profiles", profileJSON("bundle profile", 0), true, true)
+	if profileResponse.Code != http.StatusCreated {
+		t.Fatalf("create bundle profile=%d %s", profileResponse.Code, profileResponse.Body.String())
+	}
+	var profileResponseBody struct {
+		Profile contracts.Profile `json:"profile"`
+	}
+	if err = json.Unmarshal(profileResponse.Body.Bytes(), &profileResponseBody); err != nil {
+		t.Fatal("decode profile response", err)
+	}
+	profile := profileResponseBody.Profile
+	trapBody := `{"name":"bundle trap","deployment_bindings":[{"service_id":"web","host_port":18080}]}`
+	trapResponse := op.request(http.MethodPost, "/api/v1/traps", trapBody, true, true)
+	if trapResponse.Code != http.StatusCreated {
+		t.Fatalf("create bundle trap=%d %s", trapResponse.Code, trapResponse.Body.String())
+	}
+	var trap contracts.Trap
+	if err = json.Unmarshal(trapResponse.Body.Bytes(), &trap); err != nil {
+		t.Fatal("decode trap response", err)
+	}
+	assignment := fmt.Sprintf(`{"profile_id":%q,"revision":1}`, profile.ID)
+	assigned := op.request(http.MethodPut, "/api/v1/traps/"+trap.ID+"/profile", assignment, true, true)
+	if assigned.Code != http.StatusOK {
+		t.Fatalf("assign bundle profile=%d %s", assigned.Code, assigned.Body.String())
+	}
+	bundleResponse := op.request(http.MethodGet, "/api/v1/traps/"+trap.ID+"/bundle", "", false, true)
+	if bundleResponse.Code != http.StatusOK || bundleResponse.Header().Get("Content-Type") != "application/zip" || bundleResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("download bundle=%d type=%q cache=%q", bundleResponse.Code, bundleResponse.Header().Get("Content-Type"), bundleResponse.Header().Get("Cache-Control"))
+	}
+	archive, err := zip.NewReader(bytes.NewReader(bundleResponse.Body.Bytes()), int64(bundleResponse.Body.Len()))
+	if err != nil {
+		t.Fatalf("open returned bundle: %v", err)
+	}
+	contents := make(map[string]string, len(archive.File))
+	for _, file := range archive.File {
+		reader, openErr := file.Open()
+		if openErr != nil {
+			t.Fatal("open returned bundle entry", openErr)
+		}
+		data, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil {
+			t.Fatal("read returned bundle entry", readErr)
+		}
+		contents[file.Name] = string(data)
+	}
+	if !strings.Contains(contents["decoy-config.json"], "lab-credential-secret") || !strings.Contains(contents["compose.yaml"], "18080") || strings.Contains(contents["install.sh"], "lab-credential-secret") {
+		t.Fatal("bundle content does not match the assigned revision or leaks credentials into the installer")
+	}
+	var bundleAuditCount int
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action='trap.bundle_downloaded' AND entity_id=$1`, trap.ID).Scan(&bundleAuditCount); err != nil || bundleAuditCount != 1 {
+		t.Fatalf("bundle access audit count=%d err=%v", bundleAuditCount, err)
 	}
 }
 

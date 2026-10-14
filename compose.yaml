@@ -28,9 +28,15 @@ services:
       LISTEN_ADDR: 0.0.0.0:8081
       PUBLIC_ORIGIN: http://127.0.0.1:${CONTROL_PORT:-8081}
       COOKIE_SECURE: "false"
+      GEOIP_CITY_DB: ${GEOIP_CITY_DB:-}
+      GEOIP_ASN_DB: ${GEOIP_ASN_DB:-}
+      GEOIP_SOURCE: ${GEOIP_SOURCE:-}
+      GEOIP_VERSION: ${GEOIP_VERSION:-}
     ports:
       - "127.0.0.1:${CONTROL_PORT:-8081}:8081"
     networks: [backend]
+    volumes:
+      - ${GEOIP_DATA_DIR:-./geoip}:/var/lib/geoip:ro
     restart: unless-stopped
 
 volumes:

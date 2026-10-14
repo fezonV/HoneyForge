@@ -1,0 +1,19 @@
+FROM golang:1.27.2-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-decoy ./cmd/decoy
+
+FROM alpine:3.22
+RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge \
+    && mkdir -p /var/lib/honeyforge /etc/honeyforge \
+    && chown -R honeyforge:honeyforge /var/lib/honeyforge /etc/honeyforge
+COPY --from=build /out/honeyforge-decoy /usr/local/bin/honeyforge-decoy
+COPY scripts/decoy-entrypoint.sh /usr/local/bin/honeyforge-decoy-entrypoint
+RUN chmod 0555 /usr/local/bin/honeyforge-decoy-entrypoint
+USER honeyforge
+ENV HF_DECOY_CONFIG=/var/lib/honeyforge/decoy-config.json \
+    HF_DECOY_BOOTSTRAP_CONFIG=/etc/honeyforge/decoy-config.json
+VOLUME ["/var/lib/honeyforge"]
+ENTRYPOINT ["/usr/local/bin/honeyforge-decoy-entrypoint"]

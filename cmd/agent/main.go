@@ -5,29 +5,58 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"honeyforge/internal/agent"
+	"honeyforge/internal/contracts"
 )
 
 func main() {
 	centerURL := flag.String("center", "", "HTTPS origin of the HoneyForge control center")
+	caFile := flag.String("ca-file", os.Getenv("HF_CA_FILE"), "optional PEM CA bundle for a private center certificate authority")
 	trapID := flag.String("trap", "", "trap UUID (required only for first enrollment)")
 	enrollmentToken := flag.String("enrollment-token", "", "one-time enrollment token (required only for first enrollment)")
+	enrollmentTokenFile := flag.String("enrollment-token-file", os.Getenv("HF_ENROLLMENT_TOKEN_FILE"), "file containing the one-time enrollment token")
 	statePath := flag.String("state", defaultStatePath(), "private path for persistent agent credentials and config")
+	queuePath := flag.String("queue", defaultQueuePath(), "private SQLite path for pending telemetry")
+	ipcListen := flag.String("ipc-listen", envOr("HF_AGENT_IPC_LISTEN", "127.0.0.1:9101"), "private listener for decoy telemetry")
+	ipcToken := flag.String("ipc-token", os.Getenv("HF_DECOY_AGENT_IPC_TOKEN"), "shared secret for local decoy-to-agent telemetry IPC")
+	ipcTokenFile := flag.String("ipc-token-file", os.Getenv("HF_DECOY_AGENT_IPC_TOKEN_FILE"), "file containing the decoy-to-agent IPC secret")
+	decoyToken := flag.String("decoy-token", os.Getenv("HF_AGENT_DECOY_IPC_TOKEN"), "shared secret for local agent-to-decoy administration")
+	decoyTokenFile := flag.String("decoy-token-file", os.Getenv("HF_AGENT_DECOY_IPC_TOKEN_FILE"), "file containing the agent-to-decoy IPC secret")
+	decoyURL := flag.String("decoy-admin", os.Getenv("HF_DECOY_ADMIN_URL"), "private decoy administration URL")
 	flag.Parse()
 
 	if *centerURL == "" {
 		log.Fatal("-center is required and must be an HTTPS origin")
 	}
-	client, err := agent.NewClient(*centerURL)
+	var err error
+	*ipcToken, err = readSecret(*ipcToken, *ipcTokenFile)
+	if err != nil {
+		log.Fatal("decoy telemetry IPC secret is unavailable")
+	}
+	if *decoyURL != "" {
+		*decoyToken, err = readSecret(*decoyToken, *decoyTokenFile)
+		if err != nil {
+			log.Fatal("decoy administration IPC secret is unavailable")
+		}
+	}
+	client, err := agent.NewClientWithCA(*centerURL, *caFile)
 	if err != nil {
 		log.Fatal(err)
 	}
+	queue, err := agent.OpenQueue(*queuePath, 10000)
+	if err != nil {
+		log.Fatalf("open event queue: %v", err)
+	}
+	defer queue.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -36,10 +65,18 @@ func main() {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Fatalf("load agent state: %v", err)
 		}
-		if *trapID == "" || *enrollmentToken == "" {
+		token := *enrollmentToken
+		if *enrollmentTokenFile != "" {
+			token, err = readSecret(token, *enrollmentTokenFile)
+			if err != nil {
+				log.Fatal("one-time enrollment token file is unavailable")
+			}
+		}
+		if *trapID == "" || token == "" {
 			log.Fatal("first run requires -trap and -enrollment-token")
 		}
-		state, err = client.Enroll(ctx, *trapID, *enrollmentToken)
+		state, err = client.Enroll(ctx, *trapID, token)
+		token = ""
 		if err != nil {
 			log.Fatalf("enroll agent: %v", err)
 		}
@@ -47,55 +84,184 @@ func main() {
 			log.Fatalf("save enrolled credentials: %v", err)
 		}
 		log.Printf("agent enrolled for trap %s; credential saved to %s", state.TrapID, *statePath)
-	} else if *trapID != "" || *enrollmentToken != "" {
-		log.Fatal("agent is already enrolled; do not pass enrollment credentials again")
-	}
-
-	if err = syncConfig(ctx, client, state, *statePath); err != nil {
-		log.Printf("initial configuration sync failed: %v", err)
-	}
-	if err = sendHeartbeat(ctx, client, state); err != nil {
-		log.Printf("initial heartbeat failed: %v", err)
-	}
-	syncTicker := time.NewTicker(2 * time.Second)
-	heartbeatTicker := time.NewTicker(5 * time.Second)
-	defer syncTicker.Stop()
-	defer heartbeatTicker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-syncTicker.C:
-			if err = syncConfig(ctx, client, state, *statePath); err != nil {
-				log.Printf("configuration sync failed: %v", err)
-				continue
-			}
-			log.Printf("desired configuration is revision %d for trap %s", state.Config.Revision, state.TrapID)
-			syncTicker.Reset(time.Duration(state.Config.Config.Channel.SyncSeconds) * time.Second)
-			heartbeatTicker.Reset(time.Duration(state.Config.Config.Channel.HeartbeatSeconds) * time.Second)
-		case <-heartbeatTicker.C:
-			if err = sendHeartbeat(ctx, client, state); err != nil {
-				log.Printf("heartbeat failed: %v", err)
-			}
+	} else {
+		if *trapID != "" && *trapID != state.TrapID {
+			log.Fatal("configured trap does not match the persisted enrollment")
+		}
+		if *enrollmentToken != "" {
+			log.Fatal("agent is already enrolled; do not pass an enrollment token again")
 		}
 	}
+
+	var ipcServer *http.Server
+	if *ipcToken != "" {
+		ipcServer = &http.Server{Addr: *ipcListen, Handler: agent.IPCHandler(queue, state, *ipcToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+		go func() {
+			log.Printf("agent telemetry IPC listening on %s", *ipcListen)
+			if serveErr := ipcServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				log.Printf("agent telemetry IPC stopped: %v", serveErr)
+				stop()
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = ipcServer.Shutdown(shutdownCtx)
+		}()
+	}
+
+	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
+	if *decoyURL != "" {
+		if *decoyToken == "" {
+			log.Fatal("HF_AGENT_DECOY_IPC_TOKEN is required when decoy administration is enabled")
+		}
+		adapter, err = agent.NewHTTPDecoyAdapter(*decoyURL, *decoyToken)
+		if err != nil {
+			log.Fatalf("configure decoy adapter: %v", err)
+		}
+		if state.ConfigSnapshot() != nil && ipcServer == nil {
+			log.Printf("decoy commands are enabled but the event IPC token is missing")
+		}
+	}
+	runAgentLoops(ctx, client, state, *statePath, queue, adapter)
 }
 
-func syncConfig(ctx context.Context, client *agent.Client, state *agent.State, statePath string) error {
+// Network stalls in one lane must not suppress heartbeats or local intake.
+// Commands stay sequential within their lane and use a durable result journal.
+func runAgentLoops(ctx context.Context, client *agent.Client, state *agent.State, statePath string, queue *agent.EventQueue, adapter agent.DecoyAdapter) {
+	var workers sync.WaitGroup
+	start := func(name string, interval func() time.Duration, action func(context.Context) error) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for ctx.Err() == nil {
+				if err := action(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("%s failed: %v", name, err)
+				}
+				timer := time.NewTimer(interval())
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}()
+	}
+	start("heartbeat", func() time.Duration {
+		if cfg := state.ConfigSnapshot(); cfg != nil && cfg.Config.Channel.HeartbeatSeconds >= 5 {
+			return time.Duration(cfg.Config.Channel.HeartbeatSeconds) * time.Second
+		}
+		return 5 * time.Second
+	}, func(ctx context.Context) error { return sendHeartbeatWithQueue(ctx, client, state, adapter, queue) })
+	start("telemetry delivery", func() time.Duration { return time.Second }, func(ctx context.Context) error {
+		requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return queue.Flush(requestCtx, client, state, 100, nil)
+	})
+	var nextSync time.Time
+	start("configuration and command processing", func() time.Duration { return 2 * time.Second }, func(ctx context.Context) error {
+		if !time.Now().Before(nextSync) {
+			if err := syncConfig(ctx, client, state, statePath); err != nil {
+				log.Printf("configuration sync failed; keeping previous configuration: %v", err)
+				nextSync = time.Now().Add(2 * time.Second)
+			} else {
+				interval := 2 * time.Second
+				if cfg := state.ConfigSnapshot(); cfg != nil && cfg.Config.Channel.SyncSeconds >= 2 {
+					interval = time.Duration(cfg.Config.Channel.SyncSeconds) * time.Second
+				}
+				nextSync = time.Now().Add(interval)
+			}
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		return agent.ProcessCommands(requestCtx, client, state, adapter, queue)
+	})
+	workers.Wait()
+}
+
+type configFetcher interface {
+	FetchConfig(context.Context, *agent.State) (*agent.ConfigResponse, error)
+}
+
+func syncConfig(ctx context.Context, client configFetcher, state *agent.State, statePath string) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	config, err := client.FetchConfig(requestCtx, state)
 	if err != nil {
 		return err
 	}
-	state.Config = config
-	return agent.SaveState(statePath, state)
+	previous := state.ConfigSnapshot()
+	if previous != nil && previous.ProfileID == config.ProfileID && previous.Revision == config.Revision {
+		return nil
+	}
+	candidate := &agent.State{AgentID: state.AgentID, TrapID: state.TrapID, Token: state.Token, Config: config}
+	if err = agent.SaveState(statePath, candidate); err != nil {
+		return err
+	}
+	state.SetConfig(config)
+	return nil
 }
 
-func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State) error {
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func readSecret(value, path string) (string, error) {
+	if path == "" {
+		return value, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > 4096 {
+		return "", errors.New("secret file unavailable")
+	}
+	secret := strings.TrimSpace(string(data))
+	if secret == "" {
+		return "", errors.New("secret file is empty")
+	}
+	return secret, nil
+}
+
+func sendHeartbeatWithQueue(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter, queue *agent.EventQueue) error {
+	statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	serviceState := currentServiceState(statusCtx, adapter)
+	cancel()
+	var telemetry *contracts.AgentTelemetry
+	if queue != nil {
+		statusCtx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		status, err := queue.TelemetryStatus(statusCtx)
+		cancel()
+		if err != nil {
+			serviceState = "error"
+		} else {
+			telemetry = &status
+			if status.Degraded && serviceState == "running" {
+				serviceState = "degraded"
+			}
+		}
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return client.Heartbeat(requestCtx, state, "unknown")
+	return client.HeartbeatWithTelemetry(requestCtx, state, serviceState, telemetry)
+}
+
+func currentServiceState(ctx context.Context, adapter agent.DecoyAdapter) string {
+	if adapter == nil {
+		return "unknown"
+	}
+	serviceState, err := adapter.ServiceState(ctx)
+	if err != nil {
+		return "error"
+	}
+	switch serviceState {
+	case "unknown", "running", "stopped", "degraded", "error":
+		return serviceState
+	default:
+		return "error"
+	}
 }
 
 func defaultStatePath() string {
@@ -107,4 +273,15 @@ func defaultStatePath() string {
 		return filepath.Join(".", "honeyforge-agent.json")
 	}
 	return filepath.Join(configDir, "honeyforge", "agent-state.json")
+}
+
+func defaultQueuePath() string {
+	if path := os.Getenv("HF_AGENT_QUEUE"); path != "" {
+		return path
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return filepath.Join(".", "honeyforge-agent.sqlite")
+	}
+	return filepath.Join(configDir, "honeyforge", "agent-events.sqlite")
 }
