@@ -94,6 +94,10 @@ func (s *Server) PublicHandler(serviceID string) http.Handler {
 			return
 		}
 		if err := connectionError(r.Context()); err != nil {
+			// The failed connection has no durable connection.opened event.
+			// Force a new connection so recovery retries that event instead of
+			// keeping this connection's error forever through HTTP keep-alive.
+			w.Header().Set("Connection", "close")
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return
 		}

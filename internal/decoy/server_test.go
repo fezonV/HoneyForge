@@ -798,4 +798,24 @@ func TestConnectionTelemetryFailureBlocksHTTPAction(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("connection telemetry failure status=%d", resp.StatusCode)
 	}
+	if !resp.Close {
+		t.Fatal("failed connection must be closed so telemetry can recover")
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	sink.mu.Lock()
+	sink.err = nil
+	sink.mu.Unlock()
+	recovered, err := client.Get(fmt.Sprintf("http://%s/", listener.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Body.Close()
+	if recovered.StatusCode != http.StatusOK {
+		t.Fatalf("recovered connection status=%d", recovered.StatusCode)
+	}
+	events := sink.snapshot()
+	if len(events) != 2 || events[0].EventType != "connection.opened" || events[1].EventType != "http.request" {
+		t.Fatalf("recovered request must persist connection and request events: %+v", events)
+	}
 }
