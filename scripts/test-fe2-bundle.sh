@@ -12,8 +12,8 @@ node_name="hf-fe2-bundle-node-$$"
 cleanup() { docker rm -f -v "$node_name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT HUP INT TERM
 
-docker run -d --privileged --name "$node_name" --entrypoint dockerd \
-  docker:28-dind --storage-driver=vfs --host=unix:///var/run/docker.sock >/dev/null
+docker run -d --privileged --name "$node_name" \
+  docker:28-dind dockerd --storage-driver=vfs --host=unix:///var/run/docker.sock >/dev/null
 attempt=0
 until docker exec "$node_name" docker info >/dev/null 2>&1; do
   attempt=$((attempt + 1))
