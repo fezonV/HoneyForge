@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"honeyforge/internal/contracts"
@@ -33,10 +34,39 @@ func (e *HTTPStatusError) Error() string {
 // State contains the agent credential and last desired configuration. It must
 // only be written to a private path because AgentToken grants trap access.
 type State struct {
+	mu      sync.RWMutex    `json:"-"`
 	AgentID string          `json:"agent_id"`
 	TrapID  string          `json:"trap_id"`
 	Token   string          `json:"agent_token"`
 	Config  *ConfigResponse `json:"config,omitempty"`
+}
+
+func (s *State) SetConfig(config *ConfigResponse) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if config == nil {
+		s.Config = nil
+		return
+	}
+	copy := *config
+	copy.Config.Services = append([]contracts.Service(nil), config.Config.Services...)
+	copy.Config.SyntheticCredentials = append([]contracts.SyntheticCredential(nil), config.Config.SyntheticCredentials...)
+	copy.Config.FakeFS = append([]contracts.FakeFile(nil), config.Config.FakeFS...)
+	copy.Config.Logging.Categories = append([]string(nil), config.Config.Logging.Categories...)
+	s.Config = &copy
+}
+func (s *State) ConfigSnapshot() *ConfigResponse {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Config == nil {
+		return nil
+	}
+	copy := *s.Config
+	copy.Config.Services = append([]contracts.Service(nil), s.Config.Config.Services...)
+	copy.Config.SyntheticCredentials = append([]contracts.SyntheticCredential(nil), s.Config.Config.SyntheticCredentials...)
+	copy.Config.FakeFS = append([]contracts.FakeFile(nil), s.Config.Config.FakeFS...)
+	copy.Config.Logging.Categories = append([]string(nil), s.Config.Config.Logging.Categories...)
+	return &copy
 }
 
 type ConfigResponse struct {
@@ -95,7 +125,7 @@ func (c *Client) FetchConfig(ctx context.Context, state *State) (*ConfigResponse
 	if err != nil {
 		return nil, err
 	}
-	if result.TrapID != state.TrapID || result.ProfileID == "" || result.Revision < 1 {
+	if result.TrapID != state.TrapID || !contracts.ValidID(result.ProfileID) || result.Revision < 1 || len(contracts.ValidateProfile(result.Config)) > 0 {
 		return nil, errors.New("center returned an invalid configuration response")
 	}
 	return &result, nil
@@ -211,7 +241,15 @@ func SaveState(path string, state *State) error {
 	if path == "" || state == nil {
 		return errors.New("state path and state are required")
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	state.mu.RLock()
+	persisted := struct {
+		AgentID string          `json:"agent_id"`
+		TrapID  string          `json:"trap_id"`
+		Token   string          `json:"agent_token"`
+		Config  *ConfigResponse `json:"config,omitempty"`
+	}{state.AgentID, state.TrapID, state.Token, state.Config}
+	data, err := json.MarshalIndent(persisted, "", "  ")
+	state.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("encode agent state: %w", err)
 	}

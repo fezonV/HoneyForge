@@ -363,7 +363,7 @@ func TestControlPostgresFoundation(t *testing.T) {
 	eventsReq.Header.Set("Content-Type", "application/json")
 	eventsRes := httptest.NewRecorder()
 	h.ServeHTTP(eventsRes, eventsReq)
-	if eventsRes.Code != 422 {
+	if eventsRes.Code != 400 {
 		t.Fatalf("invalid SQL-shaped event accepted=%d %s", eventsRes.Code, eventsRes.Body.String())
 	}
 	var agentID string

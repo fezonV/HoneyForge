@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: HoneyForge Decoy HTTP Interface
+  version: 1.0.0
+  description: >-
+    Public visitor-facing HTTP routes served by one configured decoy service.
+    The selected service determines the displayed name and banner. Pages render
+    profile text as escaped HTML. The decoy returns simulated content and
+    command output; it does not expose host files, shell access, management
+    credentials, private administration routes, or control-center details.
+    Rendered content comes from the runtime's active applied profile revision;
+    visitors cannot choose a profile or revision through these routes.
+servers:
+  - url: http://localhost:8080
+    description: Example public listener for one configured service.
+tags:
+  - name: Visitor pages
+    description: Profile-backed HTML pages and the simulated login flow.
+  - name: Archive
+    description: Public archive metadata and session-protected fake file content.
+  - name: Simulated console
+    description: A fixed command vocabulary over profile-provided fake files.
+paths:
+  /:
+    get:
+      tags: [Visitor pages]
+      operationId: getDecoyHome
+      summary: Render the selected service home page
+      description: >-
+        The document title and heading use visible_texts.title when present,
+        otherwise the selected service name. The service banner is rendered
+        below it. A low profile serves this page without a session. A medium
+        profile redirects visitors without a valid session to /login. Dynamic
+        profile text is escaped by the HTML renderer.
+      security:
+        - {}
+        - archiveSession: []
+      responses:
+        '200':
+          description: Home page HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+        '303':
+          description: Medium profile requires login; redirect to /login.
+          headers:
+            Location:
+              schema:
+                type: string
+                const: /login
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /login:
+    get:
+      tags: [Visitor pages]
+      operationId: getDecoyLogin
+      summary: Render the medium-profile login form
+      description: Returns a minimal username/password HTML form. Low profiles do not expose login and return 404.
+      responses:
+        '200':
+          description: Login form HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Login is unavailable for a low profile.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Visitor pages]
+      operationId: submitDecoyLogin
+      summary: Submit synthetic credentials
+      description: >-
+        Accepts URL-encoded credentials. The request body is limited to 16 KiB;
+        username is limited to 128 bytes and password to 256 bytes. A successful
+        login creates a 900-second visitor session and redirects to /files.
+        Invalid credentials return the configured visible failure text. Low
+        profiles do not expose login and return 404.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginForm'
+      responses:
+        '303':
+          description: Login succeeded; redirect to /files and set the session cookie.
+          headers:
+            Location:
+              schema:
+                type: string
+                const: /files
+            Set-Cookie:
+              description: >-
+                archive_session cookie with Path=/, HttpOnly, SameSite=Strict,
+                and Max-Age=900. Secure is set when the request uses TLS.
+              schema:
+                type: string
+        '400':
+          description: Invalid form data or credentials exceed field limits.
+        '401':
+          description: Login failed; the response body contains the profile's visible failure text and no session cookie is set.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Login is unavailable for a low profile.
+        '413':
+          description: Request body exceeds the 16 KiB form limit.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /files:
+    get:
+      tags: [Archive]
+      operationId: getDecoyFiles
+      summary: List fake files or read one fake file
+      description: >-
+        Without path, returns the profile's fake-file paths as JSON. Listing is
+        public for a low profile and requires a valid session for a medium
+        profile. A low profile never serves file content: a path request returns
+        403. Medium-profile file reads require a session and only return literal
+        content from the configured fake file set. download=1 returns the same
+        content as an attachment.
+      security:
+        - {}
+        - archiveSession: []
+      parameters:
+        - name: path
+          in: query
+          required: false
+          description: Relative path of a configured fake file. Omit to list files.
+          schema:
+            type: string
+            maxLength: 1024
+        - name: download
+          in: query
+          required: false
+          description: Set to 1 to return a file attachment.
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: >-
+            With no path, a JSON list of file paths. With a valid medium-profile
+            path, text/plain fake file content; download=1 also sets
+            Content-Disposition to attachment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileListing'
+            text/plain:
+              schema:
+                type: string
+          headers:
+            Content-Disposition:
+              description: Present for download=1 and names the fake file attachment.
+              schema:
+                type: string
+        '401':
+          description: A medium profile requires a valid session for file listing or reading.
+        '403':
+          description: Low profiles expose the catalogue but do not serve file content.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Path is malformed or is not present in the fake file set.
+        '413':
+          description: Request target exceeds the supported path length.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /console:
+    get:
+      tags: [Simulated console]
+      operationId: getDecoyConsole
+      summary: Render the simulated console form
+      description: Requires a valid medium-profile visitor session.
+      security:
+        - archiveSession: []
+      responses:
+        '200':
+          description: Console form HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+        '401':
+          description: Session is missing or invalid.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Simulated console]
+      operationId: submitDecoyCommand
+      summary: Run one supported simulated command
+      description: >-
+        Accepts a URL-encoded command string of at most 1024 bytes in a form
+        body limited to 16 KiB. Only pwd, ls, and cat over configured fake
+        files are simulated. Unknown commands return a refusal message; no host
+        shell command is executed. The response is text/plain with status 200.
+      security:
+        - archiveSession: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ConsoleForm'
+      responses:
+        '200':
+          description: Literal simulated command result.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Invalid form data or command exceeds 1024 bytes.
+        '401':
+          description: Session is missing or invalid.
+        '413':
+          description: Request body exceeds the 16 KiB form limit.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /logout:
+    post:
+      tags: [Visitor pages]
+      operationId: logoutDecoyVisitor
+      summary: End the visitor session
+      security:
+        - archiveSession: []
+      responses:
+        '303':
+          description: Session ended; redirect to /login and expire the session cookie.
+          headers:
+            Location:
+              schema:
+                type: string
+                const: /login
+            Set-Cookie:
+              description: Expired archive_session cookie with Max-Age=-1.
+              schema:
+                type: string
+        '401':
+          description: Session is missing or invalid.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    archiveSession:
+      type: apiKey
+      in: cookie
+      name: archive_session
+      description: >-
+        Opaque per-process cookie issued by a successful medium-profile login.
+        It is HttpOnly, SameSite=Strict, and expires after 900 seconds.
+  schemas:
+    LoginForm:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          maxLength: 128
+        password:
+          type: string
+          maxLength: 256
+    ConsoleForm:
+      type: object
+      additionalProperties: false
+      properties:
+        command:
+          type: string
+          maxLength: 1024
+          description: Supported examples are pwd, ls, and cat reports/summary.txt.
+    FileListing:
+      type: object
+      additionalProperties: false
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            type: string
+  responses:
+    ServiceUnavailable:
+      description: >-
+        The service is stopped or required telemetry could not be durably
+        accepted. The response is a generic plain-text message and contains no
+        private implementation details.
+      content:
+        text/plain:
+          schema:
+            type: string

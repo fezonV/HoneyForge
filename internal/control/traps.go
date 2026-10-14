@@ -602,6 +602,15 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"trap_id": id, "agent_status": "online", "service_status": request.ServiceState, "last_seen": time.Now().UTC().Format(time.RFC3339Nano)})
 }
 
+func validTelemetryEventType(s string) bool {
+	switch s {
+	case "connection.opened", "http.request", "auth.attempt", "session.started", "file.listed", "file.read", "file.downloaded", "session.ended", "command.received":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !contracts.ValidID(id) {
@@ -645,7 +654,7 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	duplicates := make([]string, 0)
 	for _, event := range request.Events {
 		if event.SchemaVersion != "1.0" || !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID ||
-			event.ServiceID == "" || len(event.ServiceID) > 64 || !validAgentEventType(event.EventType) || event.Protocol != "http" ||
+			event.ServiceID == "" || len(event.ServiceID) > 64 || !validTelemetryEventType(event.EventType) || event.Protocol != "http" ||
 			(event.SessionID != "" && !contracts.ValidID(event.SessionID)) || (event.ProfileID != "" && !contracts.ValidID(event.ProfileID)) ||
 			((event.ProfileID == "") != (event.AppliedRevision == nil)) || (event.AppliedRevision != nil && *event.AppliedRevision < 1) ||
 			(event.SourceIP != "" && net.ParseIP(event.SourceIP) == nil) ||
@@ -663,6 +672,24 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 		if marshalErr != nil || len(payload) > 256*1024 {
 			fail(w, r, 422, "validation_failed", "event payload is invalid or too large", nil)
 			return
+		}
+		if event.SessionID != "" {
+			var sessionID string
+			err = tx.QueryRow(ctx, `INSERT INTO visitor_sessions(id,trap_id,started_at) VALUES($1,$2,$3) ON CONFLICT (id) DO UPDATE SET started_at=LEAST(visitor_sessions.started_at,EXCLUDED.started_at) WHERE visitor_sessions.trap_id=EXCLUDED.trap_id RETURNING id::text`, event.SessionID, id, occurred).Scan(&sessionID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				fail(w, r, 409, "session_conflict", "session ID belongs to another trap", nil)
+				return
+			}
+			if err != nil {
+				fail(w, r, 503, "not_ready", "visitor session could not be stored", nil)
+				return
+			}
+			if event.EventType == "session.ended" {
+				if _, err = tx.Exec(ctx, `UPDATE visitor_sessions SET ended_at=GREATEST(COALESCE(ended_at,$2),$2) WHERE id=$1 AND trap_id=$3`, event.SessionID, occurred, id); err != nil {
+					fail(w, r, 503, "not_ready", "visitor session could not be updated", nil)
+					return
+				}
+			}
 		}
 		var inserted bool
 		err = tx.QueryRow(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,NULLIF($11,'')::inet,$12,$13,$14,$15) ON CONFLICT (agent_id,id) DO NOTHING RETURNING true`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&inserted)
@@ -880,15 +907,6 @@ func agentBearer(r *http.Request) (string, bool) {
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 	return token, token != "" && len(token) <= 128 && !strings.Contains(token, " ")
-}
-
-func validAgentEventType(eventType string) bool {
-	switch eventType {
-	case "connection.opened", "http.request", "auth.attempt", "session.started", "file.listed", "file.read", "file.downloaded", "session.ended", "command.received":
-		return true
-	default:
-		return false
-	}
 }
 
 func (s *Server) queueCommand(w http.ResponseWriter, r *http.Request) {
