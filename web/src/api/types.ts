@@ -108,6 +108,13 @@ export interface CreateProfileRequest {
   config: ProfileConfig;
 }
 
+export interface PatchProfileRequest {
+  base_revision: number;
+  name: string;
+  description: string;
+  config: ProfileConfig;
+}
+
 
 export interface DeploymentBinding {
   service_id: string;

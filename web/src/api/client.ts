@@ -553,9 +553,124 @@ export const api = {
       };
     },
 
+    async patch(
+      id: string,
+      data: {
+        base_revision: number;
+        name: string;
+        description?: string;
+        config: ProfileConfig;
+      }
+    ): Promise<{ profile: Profile; revision: ProfileRevision }> {
+      if (isDevModeActive()) {
+        await new Promise((r) => setTimeout(r, 250));
+        const found = mockProfiles.find((p) => p.id === id);
+        if (!found) throw new ApiRequestError('Профиль не найден', 404, 'not_found');
+
+        if (data.base_revision !== found.revision) {
+          throw new ApiRequestError(
+            'Профиль был изменён другим пользователем',
+            409,
+            'revision_conflict',
+            { current_revision: String(found.revision) }
+          );
+        }
+
+        found.revision += 1;
+        found.name = data.name;
+        found.description = data.description || '';
+        found.level = data.config.level as InteractionLevel;
+        found.services = data.config.services;
+        found.config = data.config;
+        found.updated_at = new Date().toISOString();
+
+        const newRev: ProfileRevision = {
+          profile_id: id,
+          revision: found.revision,
+          config: data.config,
+          created_at: new Date().toISOString(),
+          created_by: 'operator',
+          sensitive_redacted: true,
+        };
+
+        const key = `${id}:${found.revision}`;
+        profileRevisionCache.set(key, newRev);
+
+        return { profile: found, revision: newRev };
+      }
+
+      const res = await request<any>(`/api/v1/profiles/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          base_revision: data.base_revision,
+          name: data.name,
+          description: data.description || '',
+          config: data.config,
+        }),
+      });
+
+      const prof = res.profile || res;
+      const key = `${id}:${res.revision?.revision || prof.current_revision}`;
+      if (res.revision) {
+        profileRevisionCache.set(key, res.revision);
+      }
+
+      return {
+        profile: {
+          id: prof.id,
+          name: prof.name,
+          description: prof.description || '',
+          level: (res.revision?.config?.level || prof.level || 'low') as InteractionLevel,
+          revision: res.revision?.revision || prof.current_revision || 1,
+          services: res.revision?.config?.services || [],
+          masking: {
+            jitter_enabled: true,
+            min_jitter_sec: 2,
+            max_jitter_sec: 8,
+            decoy_path: '/static/bundle.js',
+            hidden_service_name: 'systemd-timesyncd-worker',
+          },
+          config: res.revision?.config,
+          created_at: prof.created_at,
+          updated_at: prof.updated_at,
+          traps_count: 0,
+        },
+        revision: res.revision,
+      };
+    },
+
+    async copy(source: Profile, newName?: string): Promise<Profile> {
+      const copyName = newName || `${source.name} (копия)`;
+      let cfg = source.config;
+      if (!cfg) {
+        try {
+          const full = await api.profiles.get(source.id);
+          cfg = full.profile.config || full.revision?.config;
+        } catch {
+          // ignore error
+        }
+      }
+      return api.profiles.create({
+        name: copyName,
+        description: source.description ? `${source.description} (копия)` : 'Копия профиля приманки',
+        level: source.level,
+        services: source.services,
+        masking: source.masking,
+        config: cfg,
+      });
+    },
+
     async delete(id: string): Promise<void> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 250));
+        const assignedTrap = mockTraps.find((t) => t.desired_profile_id === id || t.profile_id === id);
+        if (assignedTrap) {
+          throw new ApiRequestError(
+            'Нельзя удалить профиль: он назначен на активные ловушки',
+            409,
+            'profile_assigned'
+          );
+        }
         mockProfiles = mockProfiles.filter((p) => p.id !== id);
         return;
       }
