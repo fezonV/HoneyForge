@@ -1,27 +1,19 @@
-commit 9c71957c0e68401902827d344cba5ac1bf6ba8f0
-Author: Анна Ардышева <ardyshevaanna@gmail.com>
-Date:   Wed Oct 14 12:48:08 2026 +0000
+FROM golang:1.27.2-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-decoy ./cmd/decoy
 
-    feat(be-04): generate audited pinned trap bundles
-
-diff --git a/Dockerfile.decoy b/Dockerfile.decoy
-index aa27660..f304289 100644
---- a/Dockerfile.decoy
-+++ b/Dockerfile.decoy
-@@ -6,7 +6,14 @@ COPY . .
- RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-decoy ./cmd/decoy
- 
- FROM alpine:3.22
--RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge
-+RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge \
-+    && mkdir -p /var/lib/honeyforge /etc/honeyforge \
-+    && chown -R honeyforge:honeyforge /var/lib/honeyforge /etc/honeyforge
- COPY --from=build /out/honeyforge-decoy /usr/local/bin/honeyforge-decoy
-+COPY scripts/decoy-entrypoint.sh /usr/local/bin/honeyforge-decoy-entrypoint
-+RUN chmod 0555 /usr/local/bin/honeyforge-decoy-entrypoint
- USER honeyforge
--ENTRYPOINT ["/usr/local/bin/honeyforge-decoy"]
-+ENV HF_DECOY_CONFIG=/var/lib/honeyforge/decoy-config.json \
-+    HF_DECOY_BOOTSTRAP_CONFIG=/etc/honeyforge/decoy-config.json
-+VOLUME ["/var/lib/honeyforge"]
-+ENTRYPOINT ["/usr/local/bin/honeyforge-decoy-entrypoint"]
+FROM alpine:3.22
+RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge \
+    && mkdir -p /var/lib/honeyforge /etc/honeyforge \
+    && chown -R honeyforge:honeyforge /var/lib/honeyforge /etc/honeyforge
+COPY --from=build /out/honeyforge-decoy /usr/local/bin/honeyforge-decoy
+COPY scripts/decoy-entrypoint.sh /usr/local/bin/honeyforge-decoy-entrypoint
+RUN chmod 0555 /usr/local/bin/honeyforge-decoy-entrypoint
+USER honeyforge
+ENV HF_DECOY_CONFIG=/var/lib/honeyforge/decoy-config.json \
+    HF_DECOY_BOOTSTRAP_CONFIG=/etc/honeyforge/decoy-config.json
+VOLUME ["/var/lib/honeyforge"]
+ENTRYPOINT ["/usr/local/bin/honeyforge-decoy-entrypoint"]

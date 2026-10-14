@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-honeyforge}
+      POSTGRES_USER: ${POSTGRES_USER:-honeyforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - honeyforge-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-honeyforge} -d ${POSTGRES_DB:-honeyforge}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [backend]
+
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.control
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-honeyforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-honeyforge}?sslmode=disable
+      LISTEN_ADDR: 0.0.0.0:8081
+      PUBLIC_ORIGIN: http://127.0.0.1:${CONTROL_PORT:-8081}
+      COOKIE_SECURE: "false"
+      GEOIP_CITY_DB: ${GEOIP_CITY_DB:-}
+      GEOIP_ASN_DB: ${GEOIP_ASN_DB:-}
+      GEOIP_SOURCE: ${GEOIP_SOURCE:-}
+      GEOIP_VERSION: ${GEOIP_VERSION:-}
+    ports:
+      - "127.0.0.1:${CONTROL_PORT:-8081}:8081"
+    networks: [backend]
+    volumes:
+      - ${GEOIP_DATA_DIR:-./geoip}:/var/lib/geoip:ro
+    restart: unless-stopped
+
+volumes:
+  honeyforge-pgdata:
+
+networks:
+  backend:
+    driver: bridge

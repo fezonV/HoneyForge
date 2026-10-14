@@ -1,117 +1,1146 @@
-commit 9c71957c0e68401902827d344cba5ac1bf6ba8f0
-Author: Анна Ардышева <ardyshevaanna@gmail.com>
-Date:   Wed Oct 14 12:48:08 2026 +0000
-
-    feat(be-04): generate audited pinned trap bundles
-
-diff --git a/api/openapi.yaml b/api/openapi.yaml
-index 3cc0706..6cc2c74 100644
---- a/api/openapi.yaml
-+++ b/api/openapi.yaml
-@@ -3,9 +3,10 @@ info:
-   title: HoneyForge Control API
-   version: 1.0.0
-   description: >-
--    Issue #1 control foundation. Operator and agent routes are separate. Agent
--    execution, event ingestion, event/session APIs and WebSocket delivery are
--    contract-only future surfaces owned by issues #2-4.
-+    HoneyForge control API. Operator and agent routes are separate. The API
-+    supports agent command execution reports, durable event ingestion, event
-+    and session queries, WebSocket notifications, audit reads, and operator-only
-+    deployment bundle downloads. Full remote-host acceptance remains in BE-04.
- servers:
-   - url: http://127.0.0.1:8081
- tags:
-@@ -20,13 +21,15 @@ tags:
-   - name: Traps
-     description: Trap registry and desired/applied assignment.
-   - name: Commands
--    description: Queued control commands; no execution in issue #1.
-+    description: Queued control commands delivered to agents and acknowledged after runtime actions.
-   - name: Audit
-     description: Audited operator actions.
-   - name: Agent enrollment
-     description: One-time enrollment and agent config read.
--  - name: Future event contracts
--    description: Schemas reserved for issues #2-4.
-+  - name: Events
-+    description: Durable event intake, history, sensitive details, export, and realtime notifications.
-+  - name: Sessions
-+    description: Visitor sessions derived from event timelines.
- paths:
-   /healthz:
-     get:
-@@ -340,6 +343,34 @@ paths:
-               schema: { $ref: '#/components/schemas/EnrollmentTokenResponse' }
-         '403': { $ref: '#/components/responses/ApiError' }
-         '404': { $ref: '#/components/responses/ApiError' }
-+  /api/v1/traps/{id}/bundle:
-+    get:
-+      operationId: get_api_v1_traps_by_id_bundle
-+      summary: Download an audited deployment bundle for the desired profile revision
-+      description: >-
-+        Returns a ZIP with the decoy configuration, Compose manifest, pinned
-+        runtime source revision, and installation instructions. The bundle
-+        contains synthetic visitor credentials but never contains an enrollment
-+        token. The operator must issue and provide that one-time token separately
-+        during installation. Downloading does not start or register the trap.
-+      tags: [Agent enrollment]
-+      security: [{ operatorSession: [] }]
-+      parameters: [{ $ref: '#/components/parameters/UUID' }]
-+      responses:
-+        '200':
-+          description: Operator-only deployment ZIP; access is written to audit.
-+          headers:
-+            Content-Disposition:
-+              schema: { type: string }
-+            Cache-Control:
-+              schema: { type: string, const: no-store }
-+          content:
-+            application/zip:
-+              schema: { type: string, format: binary }
-+        '403': { $ref: '#/components/responses/ApiError' }
-+        '404': { $ref: '#/components/responses/ApiError' }
-+        '409': { $ref: '#/components/responses/ApiError' }
-+        '503': { $ref: '#/components/responses/ApiError' }
-   /agent/v1/enroll:
-     post:
-       operationId: post_agent_v1_enroll
-@@ -471,7 +502,7 @@ paths:
-             examples: { command: { $ref: '#/components/examples/Command' } }
-       responses:
-         '201':
--          description: 'Queued command snapshot; no command execution or applied-state transition occurs in issue #1'
-+          description: Queued command snapshot; the applied revision changes only after the agent reports successful application.
-           content:
-             application/json:
-               schema: { $ref: '#/components/schemas/Command' }
-@@ -629,20 +660,6 @@ paths:
-             application/json:
-               schema: { $ref: '#/components/schemas/PageAudit' }
-         '403': { $ref: '#/components/responses/ApiError' }
--  /future/agent/v1/sessions:
--    post:
--      operationId: post_future_agent_v1_sessions
--      summary: Future visitor session contract
--      security: []
--      tags: [Future event contracts]
--      description: Contract only. Visitor-session ingestion is implemented with event delivery in issues #2-3.
--      requestBody:
--        required: true
--        content:
--          application/json:
--            schema: { $ref: '#/components/schemas/VisitorSession' }
--      responses:
--        '501': { description: 'Not implemented in issue #1' }
-   /api/v1/ws:
-     get:
-       operationId: get_api_v1_ws
-@@ -1048,7 +1065,7 @@ components:
-         protocol: { type: string, const: http }
-         payload: { type: object, maxProperties: 64 }
-     VisitorSession:
--      description: Contract for issue #3 visitor sessions. Not served by issue #1.
-+      description: Visitor session derived from committed decoy events and returned by the session timeline API.
-       type: object
-       required: [id, trap_id, started_at]
-       properties:
+openapi: 3.1.0
+info:
+  title: HoneyForge Control API
+  version: 1.0.0
+  description: >-
+    HoneyForge control API. Operator and agent routes are separate. The API
+    supports agent command execution reports, durable event ingestion, event
+    and session queries, WebSocket notifications, audit reads, and operator-only
+    deployment bundle downloads. Full remote-host acceptance remains in BE-04.
+servers:
+  - url: http://127.0.0.1:8081
+tags:
+  - name: Health
+    description: Process and database status checks.
+  - name: Auth
+    description: Operator login, logout and identity.
+  - name: Templates
+    description: Built-in supported profile templates.
+  - name: Profiles
+    description: Immutable profile revisions and sensitive reads.
+  - name: Traps
+    description: Trap registry and desired/applied assignment.
+  - name: Commands
+    description: Queued control commands delivered to agents and acknowledged after runtime actions.
+  - name: Audit
+    description: Audited operator actions.
+  - name: Agent enrollment
+    description: One-time enrollment and agent config read.
+  - name: Events
+    description: Durable event intake, history, sensitive details, export, and realtime notifications.
+  - name: Sessions
+    description: Visitor sessions derived from event timelines.
+paths:
+  /healthz:
+    get:
+      operationId: get_healthz
+      summary: Check process liveness
+      security: []
+      tags: [Health]
+      responses:
+        '200': { description: Process is running }
+  /readyz:
+    get:
+      operationId: get_readyz
+      summary: Check database readiness
+      security: []
+      tags: [Health]
+      responses:
+        '200': { description: Database is reachable }
+        '503': { $ref: '#/components/responses/ApiError' }
+  /api/v1/templates:
+    get:
+      operationId: get_api_v1_templates
+      summary: List supported templates
+      tags: [Templates]
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: Supported Low and Medium HTTP templates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageTemplate' }
+  /api/v1/auth/login:
+    post:
+      operationId: post_api_v1_auth_login
+      summary: Log in
+      security: []
+      tags: [Auth]
+      parameters: [{ $ref: '#/components/parameters/Origin' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Session cookies are set; csrf_token must be sent in both cookie and X-CSRF-Token on writes
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '429': { $ref: '#/components/responses/ApiError' }
+  /api/v1/auth/logout:
+    post:
+      operationId: post_api_v1_auth_logout
+      summary: Log out
+      tags: [Auth]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+  /api/v1/auth/me:
+    get:
+      operationId: get_api_v1_auth_me
+      summary: Read current user
+      tags: [Auth]
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/ApiError' }
+  /api/v1/profiles:
+    get:
+      operationId: get_api_v1_profiles
+      summary: List profiles
+      tags: [Profiles]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { name: name, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: level, in: query, schema: { type: string, enum: [low, medium] } }
+      responses:
+        '200': { description: Profiles ordered by UUID; normal metadata contains no synthetic credential values, content: { application/json: { schema: { $ref: '#/components/schemas/PageProfile' } } } }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+    post:
+      operationId: post_api_v1_profiles
+      summary: Create profile
+      tags: [Profiles]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileRequest' }
+            examples: { mediumProfile: { $ref: '#/components/examples/MediumProfile' } }
+      responses:
+        '201':
+          description: Profile and immutable revision 1 created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileWithRevision' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '413': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+  /api/v1/profiles/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      operationId: get_api_v1_profiles_by_id
+      summary: Read profile
+      tags: [Profiles]
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: Profile and current revision with passwords redacted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileWithRevision' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+    patch:
+      operationId: patch_api_v1_profiles_by_id
+      summary: Create profile revision
+      tags: [Profiles]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchProfileRequest' }
+      responses:
+        '200':
+          description: New immutable revision created; profile name and description are versioned with the config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileWithRevision' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+    delete:
+      operationId: delete_api_v1_profiles_by_id
+      summary: Delete profile
+      tags: [Profiles]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      responses:
+        '204': { description: Profile soft-deleted; revision history retained }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+  /api/v1/profiles/{id}/revisions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      operationId: get_api_v1_profiles_by_id_revisions
+      summary: List profile revisions
+      tags: [Profiles]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: cursor, in: query, schema: { type: string }, description: Base64url positive revision number }
+      responses:
+        '200':
+          description: Revisions in descending order; sensitive values redacted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageProfileRevision' }
+  /api/v1/profiles/{id}/revisions/{revision}:
+    get:
+      operationId: get_api_v1_profiles_by_id_revisions_by_revision
+      summary: Read profile revision
+      tags: [Profiles]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - { name: revision, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Immutable revision with sensitive values redacted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileRevision' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/profiles/{id}/revisions/{revision}/sensitive:
+    get:
+      operationId: get_api_v1_profiles_by_id_revisions_by_revision_sensitive
+      summary: Read sensitive profile revision
+      tags: [Profiles]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - { name: revision, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Full revision; access is written to audit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileRevision' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps:
+    get:
+      operationId: get_api_v1_traps
+      summary: List traps
+      tags: [Traps]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { name: name, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: status, in: query, schema: { type: string, enum: [online, offline, unknown, running, stopped, degraded, error] } }
+        - { name: profile_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Trap registry. Agent is online when last_seen is less than 20 seconds old; service state is separate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageTrap' }
+    post:
+      operationId: post_api_v1_traps
+      summary: Create trap
+      tags: [Traps]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTrapRequest' }
+            examples: { trap: { $ref: '#/components/examples/Trap' } }
+      responses:
+        '201':
+          description: Trap created; applied state is unset
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trap' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      operationId: get_api_v1_traps_by_id
+      summary: Read trap
+      tags: [Traps]
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: Trap desired/applied state and deployment bindings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trap' }
+        '404': { $ref: '#/components/responses/ApiError' }
+    delete:
+      operationId: delete_api_v1_traps_by_id
+      summary: Delete trap
+      tags: [Traps]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      responses:
+        '204': { description: Trap soft-deleted and active agent credential revoked }
+  /api/v1/traps/{id}/profile:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      operationId: put_api_v1_traps_by_id_profile
+      summary: Assign profile revision
+      tags: [Traps]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignProfileRequest' }
+      responses:
+        '200':
+          description: Desired profile revision changed; applied revision is unchanged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trap' }
+        '404': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+    delete:
+      operationId: delete_api_v1_traps_by_id_profile
+      summary: Detach desired profile
+      tags: [Traps]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      responses:
+        '200':
+          description: Desired assignment removed; applied state retained as historical state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trap' }
+  /api/v1/traps/{id}/enrollment-token:
+    post:
+      operationId: post_api_v1_traps_by_id_enrollment_token
+      summary: Issue enrollment token
+      tags: [Agent enrollment]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      responses:
+        '201':
+          description: One-time token valid for ten minutes; returned once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentTokenResponse' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps/{id}/bundle:
+    get:
+      operationId: get_api_v1_traps_by_id_bundle
+      summary: Download an audited deployment bundle for the desired profile revision
+      description: >-
+        Returns a ZIP with the decoy configuration, Compose manifest, pinned
+        runtime source revision, and installation instructions. The bundle
+        contains synthetic visitor credentials but never contains an enrollment
+        token. The operator must issue and provide that one-time token separately
+        during installation. Downloading does not start or register the trap.
+      tags: [Agent enrollment]
+      security: [{ operatorSession: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      responses:
+        '200':
+          description: Operator-only deployment ZIP; access is written to audit.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '503': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/enroll:
+    post:
+      operationId: post_agent_v1_enroll
+      summary: Enroll agent
+      security: []
+      tags: [Agent enrollment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnrollRequest' }
+      responses:
+        '201':
+          description: Agent credential returned once; only its SHA-256 hash is stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentEnrollment' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/config:
+    get:
+      operationId: get_agent_v1_traps_by_id_config
+      summary: Read desired agent configuration
+      tags: [Agent enrollment]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      responses:
+        '200':
+          description: Desired revision for the bound trap; synthetic credentials included; read audited
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigResponse' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/heartbeat:
+    post:
+      operationId: post_agent_v1_traps_by_id_heartbeat
+      summary: Report agent and decoy service state
+      tags: [Agent enrollment]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentHeartbeatRequest' }
+      responses:
+        '200':
+          description: Heartbeat committed; updates last_seen and service status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentHeartbeatResponse' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/events:
+    post:
+      operationId: post_agent_v1_traps_by_id_events
+      summary: Submit a telemetry batch
+      tags: [Telemetry]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentEventBatch' }
+      responses:
+        '200':
+          description: Events committed; repeats are acknowledged as duplicates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentEventBatchResponse' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/commands:
+    get:
+      operationId: get_agent_v1_traps_by_id_commands
+      summary: Claim pending commands for an agent
+      tags: [Commands]
+      security: [{ agentBearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/UUID' }]
+      responses:
+        '200':
+          description: Queued commands and commands whose 30-second delivery lease elapsed are returned again until reported or expired.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageCommand' }
+        '401': { $ref: '#/components/responses/ApiError' }
+  /agent/v1/traps/{id}/commands/{command_id}:
+    post:
+      operationId: post_agent_v1_traps_by_id_commands_by_command_id
+      summary: Report command execution result
+      tags: [Commands]
+      security: [{ agentBearer: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - name: command_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [applied, failed] }
+                error: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: Command result accepted }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps/{id}/commands:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      operationId: post_api_v1_traps_by_id_commands
+      summary: Queue command
+      tags: [Commands]
+      security: [{ operatorSession: [], csrfToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueCommandRequest' }
+            examples: { command: { $ref: '#/components/examples/Command' } }
+      responses:
+        '201':
+          description: Queued command snapshot; the applied revision changes only after the agent reports successful application.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Command' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '422': { $ref: '#/components/responses/ApiError' }
+    get:
+      operationId: get_api_v1_traps_by_id_commands
+      summary: List commands
+      tags: [Commands]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { name: status, in: query, schema: { type: string, enum: [queued, delivered, applied, failed, expired] } }
+      responses:
+        '200':
+          description: Commands; queued/delivered entries past TTL are lazily marked expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageCommand' }
+  /api/v1/events:
+    get:
+      operationId: get_api_v1_events
+      summary: Search stored events
+      tags: [Events]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { name: trap_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: source_ip, in: query, schema: { type: string, format: ipv4-or-ipv6 } }
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Events ordered newest first; payloads are omitted from ordinary reads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageEvent' }
+        '400': { $ref: '#/components/responses/ApiError' }
+  /api/v1/events/summary:
+    get:
+      operationId: get_api_v1_events_summary
+      summary: Aggregate events over a required time period
+      tags: [Events]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: trap_id, in: query, schema: { type: string, format: uuid } }
+        - { name: source_ip, in: query, schema: { type: string, format: ipv4-or-ipv6 } }
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Counts by event type and top ten source IPs, without event payloads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSummary' }
+        '400': { $ref: '#/components/responses/ApiError' }
+  /api/v1/events/export.csv:
+    get:
+      operationId: get_api_v1_events_export_csv
+      summary: Export filtered event metadata as CSV
+      tags: [Events]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 10000, default: 5000 } }
+        - { name: trap_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: source_ip, in: query, schema: { type: string, format: ipv4-or-ipv6 } }
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Bounded CSV with formula-neutralized cells and no payload or credentials.
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        '413': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps/{trap_id}/events/{event_id}:
+    get:
+      operationId: get_api_v1_traps_by_id_events_by_event_id
+      summary: Read event metadata without raw payload
+      tags: [Events]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { name: trap_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Event metadata; raw payload is only available from the audited operator endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecord' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/traps/{trap_id}/events/{event_id}/sensitive:
+    get:
+      operationId: get_api_v1_traps_by_id_events_by_event_id_sensitive
+      summary: Read raw event payload with operator role and audit
+      tags: [Events]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { name: trap_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Raw payload; access is recorded in audit_log.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecord' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/sessions/{id}/timeline:
+    get:
+      operationId: get_api_v1_sessions_by_id_timeline
+      summary: Read a visitor-session event timeline in chronological order
+      tags: [Sessions]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: source_ip, in: query, schema: { type: string, format: ipv4-or-ipv6 } }
+        - { name: event_type, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Session metadata and chronologically ordered event page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionTimeline' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /api/v1/audit:
+    get:
+      operationId: get_api_v1_audit
+      summary: List audit entries
+      tags: [Audit]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque base64url created_at and UUID keyset }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: actor_id, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Audit entries; secret values and token material are excluded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageAudit' }
+        '403': { $ref: '#/components/responses/ApiError' }
+  /api/v1/ws:
+    get:
+      operationId: get_api_v1_ws
+      summary: Subscribe to committed state notifications
+      security: [{ operatorSession: [] }]
+      tags: [Events]
+      description: Requires an authenticated operator session and an Origin exactly matching the configured public origin. Reconnect clients should query the REST API using the notification ID as a deduplication key.
+      x-websocket-message-schema:
+        $ref: '#/components/schemas/WSNotification'
+      responses:
+        '101': { description: WebSocket connection upgraded }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+components:
+  securitySchemes:
+    operatorSession: { type: apiKey, in: cookie, name: hf_session }
+    csrfToken: { type: apiKey, in: header, name: X-CSRF-Token, description: Must match csrf_token cookie; mutation requests also require the configured Origin when supplied }
+    agentBearer: { type: http, scheme: bearer, bearerFormat: opaque agent token }
+  parameters:
+    UUID: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+    Cursor: { name: cursor, in: query, schema: { type: string }, description: Opaque base64url keyset cursor returned as next_cursor }
+    Origin: { name: Origin, in: header, required: false, schema: { type: string } }
+  responses:
+    ApiError:
+      description: Stable nested API error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          examples: { error: { $ref: '#/components/examples/Error' } }
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 120 }
+        password: { type: string, minLength: 1, maxLength: 72, writeOnly: true }
+    LoginResponse:
+      type: object
+      required: [user, csrf_token, expires_in]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrf_token: { type: string }
+        expires_in: { type: integer, const: 28800 }
+    User:
+      type: object
+      required: [id, username, role]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        role: { type: string, enum: [operator, viewer] }
+    Template:
+      type: object
+      required: [id, name, level, description, capabilities]
+      properties:
+        id: { type: string, enum: [low-http, medium-http] }
+        name: { type: string }
+        level: { type: string, enum: [low, medium] }
+        description: { type: string }
+        capabilities: { type: array, items: { type: string } }
+    ProfileConfig:
+      type: object
+      additionalProperties: false
+      required: [template_id, level, services, visible_texts, synthetic_credentials, fake_fs, logging, channel]
+      properties:
+        template_id: { type: string, enum: [low-http, medium-http] }
+        level: { type: string, enum: [low, medium] }
+        services: { type: array, minItems: 1, maxItems: 16, items: { $ref: '#/components/schemas/Service' } }
+        visible_texts: { $ref: '#/components/schemas/VisibleTexts' }
+        synthetic_credentials: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/SyntheticCredential' } }
+        fake_fs: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/FakeFile' } }
+        logging: { $ref: '#/components/schemas/Logging' }
+        channel: { $ref: '#/components/schemas/Channel' }
+    Service:
+      type: object
+      additionalProperties: false
+      required: [id, name, protocol, port, banner]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 64 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        protocol: { type: string, const: http }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        banner: { type: string, maxLength: 4096 }
+    VisibleTexts:
+      type: object
+      additionalProperties: false
+      required: [title, login_prompt, success, failure]
+      properties:
+        title: { type: string, maxLength: 4096 }
+        login_prompt: { type: string, maxLength: 4096 }
+        success: { type: string, maxLength: 4096 }
+        failure: { type: string, maxLength: 4096 }
+    SyntheticCredential:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+        password: { type: string, maxLength: 256, description: Synthetic value is redacted in normal profile reads and disclosed only on audited sensitive/config reads }
+    FakeFile:
+      type: object
+      additionalProperties: false
+      required: [path, content]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 256, description: 'Safe POSIX relative path; no dot segments, drive prefix, backslash or control characters' }
+        content: { type: string, maxLength: 65536 }
+    Logging:
+      type: object
+      additionalProperties: false
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [connection.opened, http.request, auth.attempt, session.started, file.listed, file.read, file.downloaded, session.ended, command.received] }
+          description: http.request required for both levels. Medium also requires auth.attempt, session.started, file.listed, file.read, file.downloaded and session.ended.
+    Channel:
+      type: object
+      additionalProperties: false
+      required: [tls_required, heartbeat_seconds, sync_seconds]
+      properties:
+        tls_required: { type: boolean, const: true }
+        heartbeat_seconds: { type: integer, minimum: 5, maximum: 300 }
+        sync_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    CreateProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [name, description, config]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        config: { $ref: '#/components/schemas/ProfileConfig' }
+    PatchProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [base_revision, name, description, config]
+      properties:
+        base_revision: { type: integer, minimum: 1 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        config: { $ref: '#/components/schemas/ProfileConfig' }
+    Profile:
+      type: object
+      required: [id, name, description, current_revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        current_revision: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProfileWithRevision:
+      type: object
+      required: [profile, revision]
+      properties:
+        profile: { $ref: '#/components/schemas/Profile' }
+        revision: { $ref: '#/components/schemas/ProfileRevision' }
+    ProfileRevision:
+      type: object
+      required: [profile_id, revision, config, created_at, created_by, sensitive_redacted]
+      properties:
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        config: { $ref: '#/components/schemas/ProfileConfig' }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string, format: uuid }
+        sensitive_redacted: { type: boolean }
+    PageProfileRevision:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/ProfileRevision' } }
+    PageTrap:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Trap' } }
+    Trap:
+      type: object
+      required: [id, name, desired_profile_id, desired_revision, applied_profile_id, applied_revision, agent_status, service_status, last_seen, deployment_bindings, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        desired_profile_id: { type: [string, 'null'], format: uuid }
+        desired_revision: { type: [integer, 'null'] }
+        applied_profile_id: { type: [string, 'null'], format: uuid }
+        applied_revision: { type: [integer, 'null'] }
+        agent_status: { type: string, enum: [online, offline] }
+        service_status: { type: string, enum: [unknown, running, stopped, degraded, error] }
+        last_seen: { type: [string, 'null'], format: date-time }
+        deployment_bindings: { type: array, items: { $ref: '#/components/schemas/DeploymentBinding' } }
+        created_at: { type: string, format: date-time }
+    DeploymentBinding:
+      type: object
+      additionalProperties: false
+      required: [service_id, host_port]
+      properties:
+        service_id: { type: string, maxLength: 64 }
+        host_port: { type: integer, minimum: 1, maximum: 65535 }
+        bind_address: { type: string, format: ipv4-or-ipv6, description: Optional explicit host interface IP }
+    CreateTrapRequest:
+      type: object
+      additionalProperties: false
+      required: [name, deployment_bindings]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        deployment_bindings: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/DeploymentBinding' } }
+    AssignProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [profile_id, revision]
+      properties:
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+    EnrollmentTokenResponse:
+      type: object
+      required: [trap_id, token, expires_in_seconds]
+      properties:
+        trap_id: { type: string, format: uuid }
+        token: { type: string }
+        expires_in_seconds: { type: integer, const: 600 }
+    EnrollRequest:
+      type: object
+      additionalProperties: false
+      required: [trap_id, token]
+      properties:
+        trap_id: { type: string, format: uuid }
+        token: { type: string, minLength: 32, maxLength: 128, writeOnly: true }
+    AgentEnrollment:
+      type: object
+      required: [agent_id, trap_id, agent_token]
+      properties:
+        agent_id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        agent_token: { type: string, description: Returned once at enrollment; only its hash is stored }
+    Agent:
+      type: object
+      required: [id, trap_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        last_seen: { type: [string, 'null'], format: date-time }
+    AgentConfigResponse:
+      type: object
+      required: [trap_id, profile_id, revision, config]
+      properties:
+        trap_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        config: { $ref: '#/components/schemas/ProfileConfig' }
+    AgentHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        service_state: { type: string, enum: [unknown, running, stopped, degraded, error], default: unknown }
+    AgentHeartbeatResponse:
+      type: object
+      required: [trap_id, agent_status, service_status, last_seen]
+      properties:
+        trap_id: { type: string, format: uuid }
+        agent_status: { type: string, enum: [online] }
+        service_status: { type: string, enum: [unknown, running, stopped, degraded, error] }
+        last_seen: { type: string, format: date-time }
+    AgentEventBatch:
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/Event' }
+    AgentEventBatchResponse:
+      type: object
+      required: [accepted_ids, duplicate_ids]
+      properties:
+        accepted_ids: { type: array, items: { type: string, format: uuid } }
+        duplicate_ids: { type: array, items: { type: string, format: uuid } }
+    QueueCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [type, expected_profile_id, expected_revision, ttl_seconds]
+      properties:
+        type: { type: string, enum: [start, stop, apply_profile] }
+        expected_profile_id: { type: string, format: uuid }
+        expected_revision: { type: integer, minimum: 1 }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    Command:
+      type: object
+      required: [id, trap_id, type, expected_profile_id, expected_revision, target_profile_id, target_revision, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        type: { type: string, enum: [start, stop, apply_profile] }
+        expected_profile_id: { type: string, format: uuid }
+        expected_revision: { type: integer }
+        target_profile_id: { type: string, format: uuid }
+        target_revision: { type: integer }
+        status: { type: string, enum: [queued, delivered, applied, failed, expired] }
+        error: { type: string, maxLength: 500 }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    PageCommand:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Command' } }
+    PageAudit:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+    PageEvent:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/EventRecord' } }
+    EventRecord:
+      type: object
+      required: [event_id, trap_id, agent_id, service_id, event_type, timestamp, received_at, protocol, payload, payload_redacted]
+      properties:
+        event_id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        service_id: { type: string }
+        session_id: { type: [string, 'null'], format: uuid }
+        profile_id: { type: [string, 'null'], format: uuid }
+        applied_revision: { type: [integer, 'null'] }
+        event_type: { type: string }
+        timestamp: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        source_ip: { type: [string, 'null'], format: ipv4-or-ipv6 }
+        source_country_code: { type: string, description: Resolved from the configured local GeoIP database; absent for private or unknown addresses. }
+        source_country_name: { type: string }
+        source_asn: { type: integer, format: int64 }
+        source_asn_org: { type: string }
+        geo_source: { type: string, description: Pinned data source recorded with the event. }
+        geo_version: { type: string, description: Pinned local database version recorded with the event. }
+        source_port: { type: [integer, 'null'] }
+        destination_port: { type: [integer, 'null'] }
+        protocol: { type: string }
+        payload: { type: object, description: Empty in normal event reads; included only by the audited operator endpoint. }
+        payload_redacted: { type: boolean, description: True when the response omitted a non-empty payload. }
+    EventTypeCount:
+      type: object
+      required: [event_type, count]
+      properties:
+        event_type: { type: string }
+        count: { type: integer, format: int64 }
+    EventSourceCount:
+      type: object
+      required: [source_ip, count]
+      properties:
+        source_ip: { type: string, format: ipv4-or-ipv6 }
+        count: { type: integer, format: int64 }
+        source_country_code: { type: string }
+        source_country_name: { type: string }
+        source_asn: { type: integer, format: int64 }
+        source_asn_org: { type: string }
+    EventSummary:
+      type: object
+      required: [from, to, total_events, unique_sources, by_event_type, top_sources]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        total_events: { type: integer, format: int64 }
+        unique_sources: { type: integer, format: int64 }
+        by_event_type: { type: array, items: { $ref: '#/components/schemas/EventTypeCount' } }
+        top_sources: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/EventSourceCount' } }
+    SessionTimeline:
+      type: object
+      required: [session, items]
+      properties:
+        session: { $ref: '#/components/schemas/VisitorSession' }
+        items: { type: array, items: { $ref: '#/components/schemas/EventRecord' } }
+        next_cursor: { type: string }
+    Event:
+      description: Event telemetry accepted by the authenticated agent event batch endpoint.
+      type: object
+      required: [schema_version, event_id, trap_id, agent_id, service_id, profile_id, applied_revision, event_type, timestamp, protocol, payload]
+      properties:
+        schema_version: { type: string, const: '1.0' }
+        event_id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        agent_id: { type: string, format: uuid }
+        service_id: { type: string }
+        session_id: { type: [string, 'null'], format: uuid }
+        profile_id: { type: [string, 'null'], format: uuid }
+        applied_revision: { type: [integer, 'null'] }
+        event_type: { type: string, enum: [connection.opened, http.request, auth.attempt, session.started, file.listed, file.read, file.downloaded, session.ended, command.received] }
+        timestamp: { type: string, format: date-time }
+        source_ip: { type: string, format: ipv4-or-ipv6 }
+        source_port: { type: integer, minimum: 1, maximum: 65535 }
+        destination_port: { type: integer, minimum: 1, maximum: 65535 }
+        protocol: { type: string, const: http }
+        payload: { type: object, maxProperties: 64 }
+    VisitorSession:
+      description: Visitor session derived from committed decoy events and returned by the session timeline API.
+      type: object
+      required: [id, trap_id, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+    WSNotification:
+      description: Notification emitted by the authenticated WebSocket endpoint after related data commits.
+      type: object
+      required: [type, id, occurred_at, data]
+      properties:
+        type: { type: string, enum: [event.created, session.updated, trap.status_changed, command.updated] }
+        id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        data: { type: object }
+    AuditEntry:
+      type: object
+      required: [id, action, entity_type, entity_id, details, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_id: { type: [string, 'null'], format: uuid }
+        action: { type: string }
+        entity_type: { type: string }
+        entity_id: { type: string }
+        details: { type: object, maxProperties: 16 }
+        created_at: { type: string, format: date-time }
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            fields: { type: object, additionalProperties: { type: string } }
+    PageProfile:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Profile' } }
+    PageTemplate:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/Template' } }
+    Page:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: {} }
+        next_cursor: { type: string, description: Opaque cursor; omitted on the last page }
+  examples:
+    MediumProfile:
+      value:
+        name: Demo admin
+        description: Synthetic medium HTTP profile
+        config:
+          template_id: medium-http
+          level: medium
+          services: [{ id: web, name: Web admin, protocol: http, port: 8080, banner: HoneyForge admin }]
+          visible_texts: { title: Admin, login_prompt: Sign in, success: Welcome, failure: Denied }
+          synthetic_credentials: [{ username: demo, password: '<redacted-example>' }]
+          fake_fs: [{ path: reports/summary.txt, content: Synthetic report }]
+          logging: { categories: [http.request, auth.attempt, session.started, file.listed, file.read, file.downloaded, session.ended] }
+          channel: { tls_required: true, heartbeat_seconds: 10, sync_seconds: 2 }
+    Trap:
+      value: { name: lab-web-01, deployment_bindings: [{ service_id: web, host_port: 18080, bind_address: 127.0.0.1 }] }
+    Command:
+      value: { type: apply_profile, expected_profile_id: 8d755447-d566-4e2a-9c22-1349256e6d9a, expected_revision: 2, ttl_seconds: 120 }
+    Error:
+      value: { error: { code: revision_conflict, message: profile changed since it was read, request_id: AbCdEf123456, fields: { current_revision: '3' } } }
