@@ -100,18 +100,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure decoy adapter: %v", err)
 		}
-		if config := state.ConfigSnapshot(); config != nil {
-			applyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			applyErr := adapter.ApplyConfiguration(applyCtx, *config)
-			cancel()
-			if applyErr != nil {
-				log.Printf("initial decoy configuration apply failed: %v", applyErr)
-			} else if startErr := adapter.Start(ctx); startErr != nil {
-				log.Printf("initial decoy start failed: %v", startErr)
-			}
-			if ipcServer == nil {
-				log.Printf("decoy commands are enabled but the event IPC token is missing")
-			}
+		if state.ConfigSnapshot() != nil && ipcServer == nil {
+			log.Printf("decoy commands are enabled but the event IPC token is missing")
 		}
 	}
 	if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
@@ -122,7 +112,6 @@ func main() {
 		case <-ctx.Done():
 			return
 		case <-syncTicker.C:
-			previous := state.ConfigSnapshot()
 			if err = syncConfig(ctx, client, state, *statePath); err != nil {
 				log.Printf("configuration sync failed: %v", err)
 				continue
@@ -131,14 +120,6 @@ func main() {
 			if config == nil {
 				log.Printf("configuration sync returned no configuration")
 				continue
-			}
-			if *decoyURL != "" && (previous == nil || previous.ProfileID != config.ProfileID || previous.Revision != config.Revision) {
-				applyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-				applyErr := adapter.ApplyConfiguration(applyCtx, *config)
-				cancel()
-				if applyErr != nil {
-					log.Printf("apply updated decoy configuration: %v", applyErr)
-				}
 			}
 			log.Printf("desired configuration is revision %d for trap %s", config.Revision, state.TrapID)
 			syncTicker.Reset(time.Duration(config.Config.Channel.SyncSeconds) * time.Second)
@@ -163,7 +144,11 @@ func main() {
 	}
 }
 
-func syncConfig(ctx context.Context, client *agent.Client, state *agent.State, statePath string) error {
+type configFetcher interface {
+	FetchConfig(context.Context, *agent.State) (*agent.ConfigResponse, error)
+}
+
+func syncConfig(ctx context.Context, client configFetcher, state *agent.State, statePath string) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	config, err := client.FetchConfig(requestCtx, state)
@@ -171,11 +156,15 @@ func syncConfig(ctx context.Context, client *agent.Client, state *agent.State, s
 		return err
 	}
 	previous := state.ConfigSnapshot()
-	state.SetConfig(config)
 	if previous != nil && previous.ProfileID == config.ProfileID && previous.Revision == config.Revision {
 		return nil
 	}
-	return agent.SaveState(statePath, state)
+	candidate := &agent.State{AgentID: state.AgentID, TrapID: state.TrapID, Token: state.Token, Config: config}
+	if err = agent.SaveState(statePath, candidate); err != nil {
+		return err
+	}
+	state.SetConfig(config)
+	return nil
 }
 
 func envOr(key, fallback string) string {

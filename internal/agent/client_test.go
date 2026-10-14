@@ -44,7 +44,7 @@ func TestEnrollAndFetchConfig(t *testing.T) {
 			_, _ = w.Write([]byte(`{"agent_id":"` + agentID + `","trap_id":"` + trapID + `","agent_token":"long-lived-secret"}`))
 		case "/agent/v1/traps/" + trapID + "/config":
 			gotAuth = r.Header.Get("Authorization")
-			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"http-archive-low","level":"low","services":[],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":[]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":2}}}`))
+			_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"low-http","level":"low","services":[{"id":"web","name":"Web","protocol":"http","port":8080}],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":["http.request"]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":2}}}`))
 		case "/agent/v1/traps/" + trapID + "/heartbeat":
 			gotAuth = r.Header.Get("Authorization")
 			var request map[string]string
@@ -100,6 +100,19 @@ func TestFetchConfigRejectsCrossTrapResponse(t *testing.T) {
 	_, err := client.FetchConfig(context.Background(), &State{TrapID: "my-trap", Token: "secret"})
 	if err == nil || !strings.Contains(err.Error(), "invalid configuration") {
 		t.Fatalf("FetchConfig error = %v, want cross-trap rejection", err)
+	}
+}
+
+func TestFetchConfigRejectsInvalidProfileConfiguration(t *testing.T) {
+	const trapID = "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"trap_id":"` + trapID + `","profile_id":"33333333-3333-4333-8333-333333333333","revision":2,"config":{"template_id":"low-http","level":"low","services":[{"id":"web","name":"Web","protocol":"http","port":8080}],"visible_texts":{"title":"Test"},"synthetic_credentials":[],"fake_fs":[],"logging":{"categories":["http.request"]},"channel":{"tls_required":true,"heartbeat_seconds":10,"sync_seconds":0}}}`))
+	}))
+	defer server.Close()
+	client := &Client{baseURL: server.URL, http: server.Client()}
+	_, err := client.FetchConfig(context.Background(), &State{TrapID: trapID, Token: "secret"})
+	if err == nil || !strings.Contains(err.Error(), "invalid configuration") {
+		t.Fatalf("FetchConfig error = %v, want invalid configuration rejection", err)
 	}
 }
 

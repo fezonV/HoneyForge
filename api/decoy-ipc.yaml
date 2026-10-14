@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: HoneyForge Decoy IPC
+  version: 1.0.0
+  description: >-
+    Private local interfaces between the management agent and a decoy process.
+    Administration and telemetry use separate listeners and separately
+    configured bearer tokens.
+servers:
+  - url: http://127.0.0.1:9100
+    description: Private agent-to-decoy administration listener
+tags:
+  - name: Decoy administration
+    description: Apply configuration and control one local decoy process.
+  - name: Telemetry intake
+    description: Persist events submitted by one decoy into its agent queue.
+paths:
+  /internal/config:
+    post:
+      tags: [Decoy administration]
+      operationId: applyDecoyConfiguration
+      summary: Apply one profile revision
+      security:
+        - agentToDecoyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppliedConfiguration'
+      responses:
+        '200':
+          description: >-
+            Configuration applied or already current. In the standalone decoy
+            process, a changed configuration is atomically saved to its
+            bootstrap file before this acknowledgement is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigurationAcknowledgement'
+        '400':
+          description: Invalid JSON request body.
+        '401':
+          description: Missing or invalid agent-to-decoy token.
+        '409':
+          description: Trap mismatch, revision conflict, or listener topology change.
+  /internal/start:
+    post:
+      tags: [Decoy administration]
+      operationId: startDecoy
+      summary: Mark the decoy as running
+      security:
+        - agentToDecoyBearer: []
+      responses:
+        '204': { description: Decoy is running. }
+        '401': { description: Missing or invalid agent-to-decoy token. }
+  /internal/stop:
+    post:
+      tags: [Decoy administration]
+      operationId: stopDecoy
+      summary: Stop visitor actions and clear sessions
+      security:
+        - agentToDecoyBearer: []
+      responses:
+        '204': { description: Decoy is stopped. }
+        '401': { description: Missing or invalid agent-to-decoy token. }
+  /internal/status:
+    post:
+      tags: [Decoy administration]
+      operationId: getDecoyStatus
+      summary: Read process and applied configuration state
+      security:
+        - agentToDecoyBearer: []
+      responses:
+        '200':
+          description: Current state and applied identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecoyStatus'
+        '401': { description: Missing or invalid agent-to-decoy token. }
+  /v1/events:
+    post:
+      tags: [Telemetry intake]
+      operationId: persistDecoyEvent
+      summary: Persist one decoy event before the visitor action continues
+      description: >-
+        Served by the local agent IPC listener. The response is successful only
+        after the event has been durably enqueued in the agent's SQLite queue.
+      servers:
+        - url: http://127.0.0.1:9101
+          description: Private decoy-to-agent telemetry listener
+      security:
+        - decoyToAgentBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelemetryEvent'
+      responses:
+        '202':
+          description: Event is durably persisted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event_id, persisted]
+                properties:
+                  event_id: { type: string, format: uuid }
+                  duplicate: { type: boolean }
+                  persisted: { type: boolean, const: true }
+        '401': { description: Missing or invalid decoy-to-agent token. }
+        '400': { description: Malformed JSON event body. }
+        '409': { description: Event ID already exists with different content. }
+        '413': { description: Event body is too large. }
+        '422': { description: Event does not satisfy the telemetry contract. }
+        '507': { description: Durable event queue is full. }
+        '503': { description: Event could not be durably persisted. }
+components:
+  securitySchemes:
+    agentToDecoyBearer:
+      type: http
+      scheme: bearer
+      description: HF_AGENT_DECOY_IPC_TOKEN; grants only local decoy administration.
+    decoyToAgentBearer:
+      type: http
+      scheme: bearer
+      description: HF_DECOY_AGENT_IPC_TOKEN; grants only telemetry submission.
+  schemas:
+    AppliedConfiguration:
+      type: object
+      required: [trap_id, profile_id, revision, config]
+      properties:
+        trap_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        config: { $ref: './openapi.yaml#/components/schemas/ProfileConfig' }
+    ConfigurationAcknowledgement:
+      type: object
+      required: [trap_id, profile_id, revision]
+      properties:
+        trap_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+    DecoyStatus:
+      type: object
+      required: [status, trap_id, profile_id, revision]
+      properties:
+        status: { type: string, enum: [running, stopped] }
+        trap_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+    TelemetryEvent:
+      type: object
+      required: [schema_version, event_id, service_id, event_type, timestamp, protocol, payload]
+      properties:
+        schema_version: { type: string, const: '1.0' }
+        event_id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        agent_id:
+          description: Ignored and replaced with the enrolled agent ID by the receiving agent.
+          anyOf:
+            - { type: string, format: uuid }
+            - { type: string, const: '' }
+        service_id: { type: string, minLength: 1, maxLength: 64 }
+        session_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        applied_revision: { type: integer, minimum: 1 }
+        event_type:
+          type: string
+          enum: [connection.opened, http.request, auth.attempt, session.started, file.listed, file.read, file.downloaded, session.ended, command.received]
+        timestamp: { type: string, format: date-time }
+        source_ip:
+          type: string
+          description: IPv4 or IPv6 address of the visitor connection.
+          anyOf:
+            - { type: string, format: ipv4 }
+            - { type: string, format: ipv6 }
+        source_port: { type: integer, minimum: 1, maximum: 65535 }
+        destination_port: { type: integer, minimum: 0, maximum: 65535 }
+        protocol: { type: string, const: http }
+        payload: { type: object }
+      anyOf:
+        - required: [profile_id, applied_revision]
+        - not:
+            anyOf:
+              - required: [profile_id]
+              - required: [applied_revision]

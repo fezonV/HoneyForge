@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,32 +24,71 @@ func IPCHandler(queue *EventQueue, state *State, token string) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if state == nil || !contracts.ValidID(state.AgentID) || !contracts.ValidID(state.TrapID) {
+			http.Error(w, "agent is not enrolled", http.StatusServiceUnavailable)
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 		var event contracts.Event
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "event body is too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "invalid event", http.StatusBadRequest)
 			return
 		}
-		if !contracts.ValidID(event.EventID) || event.ServiceID == "" || len(event.ServiceID) > 64 || event.EventType == "" || event.Timestamp == "" || event.Protocol != "http" || len(event.Payload) > 64 {
+		if !contracts.ValidID(event.EventID) || event.ServiceID == "" || len(event.ServiceID) > 64 || !validEventType(event.EventType) || event.SchemaVersion != "1.0" || event.Timestamp == "" || event.Protocol != "http" || event.Payload == nil || len(event.Payload) > 64 {
 			http.Error(w, "required event fields are missing", http.StatusUnprocessableEntity)
+			return
+		}
+		if event.TrapID != "" && !contracts.ValidID(event.TrapID) {
+			http.Error(w, "invalid trap ID", http.StatusUnprocessableEntity)
+			return
+		}
+		if event.SessionID != "" && !contracts.ValidID(event.SessionID) {
+			http.Error(w, "invalid session ID", http.StatusUnprocessableEntity)
+			return
+		}
+		if event.ProfileID != "" && !contracts.ValidID(event.ProfileID) {
+			http.Error(w, "invalid profile ID", http.StatusUnprocessableEntity)
+			return
+		}
+		if (event.ProfileID == "") != (event.AppliedRevision == nil) || (event.AppliedRevision != nil && *event.AppliedRevision < 1) {
+			http.Error(w, "profile ID and applied revision must be provided together", http.StatusUnprocessableEntity)
+			return
+		}
+		if event.SourceIP != "" && net.ParseIP(event.SourceIP) == nil {
+			http.Error(w, "invalid source IP", http.StatusUnprocessableEntity)
+			return
+		}
+		if event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535) || event.DestinationPort < 0 || event.DestinationPort > 65535 {
+			http.Error(w, "invalid event port", http.StatusUnprocessableEntity)
+			return
+		}
+		payload, err := json.Marshal(event.Payload)
+		if err != nil || len(payload) > 256*1024 {
+			http.Error(w, "invalid event payload", http.StatusUnprocessableEntity)
 			return
 		}
 		if _, err := time.Parse(time.RFC3339Nano, event.Timestamp); err != nil {
 			http.Error(w, "invalid event timestamp", http.StatusUnprocessableEntity)
 			return
 		}
-		if state == nil || state.AgentID == "" || state.TrapID == "" {
-			http.Error(w, "agent is not enrolled", http.StatusServiceUnavailable)
+		if event.TrapID != "" && event.TrapID != state.TrapID {
+			http.Error(w, "event trap does not match enrollment", http.StatusUnprocessableEntity)
 			return
 		}
 		event.AgentID, event.TrapID = state.AgentID, state.TrapID
-		if config := state.ConfigSnapshot(); config != nil {
-			event.ProfileID, event.AppliedRevision = config.ProfileID, intPointer(config.Revision)
-		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		duplicate, err := queue.Enqueue(ctx, event)
 		if err != nil {
+			if errors.Is(err, ErrEventConflict) {
+				http.Error(w, "event ID already exists with different content", http.StatusConflict)
+				return
+			}
 			if errors.Is(err, ErrQueueFull) {
 				http.Error(w, "telemetry queue is full", http.StatusInsufficientStorage)
 				return
@@ -63,4 +103,11 @@ func IPCHandler(queue *EventQueue, state *State, token string) http.Handler {
 	return mux
 }
 
-func intPointer(v int) *int { return &v }
+func validEventType(s string) bool {
+	switch s {
+	case "connection.opened", "http.request", "auth.attempt", "session.started", "file.listed", "file.read", "file.downloaded", "session.ended", "command.received":
+		return true
+	default:
+		return false
+	}
+}

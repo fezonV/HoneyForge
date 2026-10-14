@@ -600,6 +600,15 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"trap_id": id, "agent_status": "online", "service_status": request.ServiceState, "last_seen": time.Now().UTC().Format(time.RFC3339Nano)})
 }
 
+func validTelemetryEventType(s string) bool {
+	switch s {
+	case "connection.opened", "http.request", "auth.attempt", "session.started", "file.listed", "file.read", "file.downloaded", "session.ended", "command.received":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !contracts.ValidID(id) {
@@ -642,8 +651,28 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	accepted := make([]string, 0, len(request.Events))
 	duplicates := make([]string, 0)
 	for _, event := range request.Events {
-		if !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID || event.ServiceID == "" || len(event.ServiceID) > 64 || event.EventType == "" || len(event.EventType) > 64 || event.Protocol == "" || len(event.Payload) > 64 {
+		if !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID || event.ServiceID == "" || len(event.ServiceID) > 64 || !validTelemetryEventType(event.EventType) || event.SchemaVersion != "1.0" || event.Protocol != "http" || event.Payload == nil || len(event.Payload) > 64 {
 			fail(w, r, 422, "validation_failed", "event identity or fields are invalid", nil)
+			return
+		}
+		if event.SessionID != "" && !contracts.ValidID(event.SessionID) {
+			fail(w, r, 422, "validation_failed", "session_id must be a UUID", nil)
+			return
+		}
+		if event.ProfileID != "" && !contracts.ValidID(event.ProfileID) {
+			fail(w, r, 422, "validation_failed", "profile_id must be a UUID", nil)
+			return
+		}
+		if (event.ProfileID == "") != (event.AppliedRevision == nil) || (event.AppliedRevision != nil && *event.AppliedRevision < 1) {
+			fail(w, r, 422, "validation_failed", "profile_id and positive applied_revision must be provided together", nil)
+			return
+		}
+		if event.SourceIP != "" && net.ParseIP(event.SourceIP) == nil {
+			fail(w, r, 422, "validation_failed", "source_ip must be a valid IP address", nil)
+			return
+		}
+		if event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535) || event.DestinationPort < 0 || event.DestinationPort > 65535 {
+			fail(w, r, 422, "validation_failed", "event ports must be between 1 and 65535", nil)
 			return
 		}
 		occurred, parseErr := time.Parse(time.RFC3339Nano, event.Timestamp)
@@ -656,16 +685,33 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 			fail(w, r, 422, "validation_failed", "event payload is invalid or too large", nil)
 			return
 		}
+		if event.SessionID != "" {
+			var sessionID string
+			err = tx.QueryRow(ctx, `INSERT INTO visitor_sessions(id,trap_id,started_at) VALUES($1,$2,$3) ON CONFLICT (id) DO UPDATE SET started_at=LEAST(visitor_sessions.started_at,EXCLUDED.started_at) WHERE visitor_sessions.trap_id=EXCLUDED.trap_id RETURNING id::text`, event.SessionID, id, occurred).Scan(&sessionID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				fail(w, r, 409, "session_conflict", "session ID belongs to another trap", nil)
+				return
+			}
+			if err != nil {
+				fail(w, r, 503, "not_ready", "visitor session could not be stored", nil)
+				return
+			}
+			if event.EventType == "session.ended" {
+				if _, err = tx.Exec(ctx, `UPDATE visitor_sessions SET ended_at=GREATEST(COALESCE(ended_at,$2),$2) WHERE id=$1 AND trap_id=$3`, event.SessionID, occurred, id); err != nil {
+					fail(w, r, 503, "not_ready", "visitor session could not be updated", nil)
+					return
+				}
+			}
+		}
 		var inserted bool
-		err = tx.QueryRow(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT (agent_id,id) DO NOTHING RETURNING true`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&inserted)
+		err = tx.QueryRow(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,NULLIF($11,'')::inet,$12,$13,$14,$15) ON CONFLICT (agent_id,id) DO NOTHING RETURNING true`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&inserted)
 		if errors.Is(err, pgx.ErrNoRows) {
-			var existingType string
-			var existingPayload []byte
-			if err = tx.QueryRow(ctx, `SELECT event_type,payload FROM events WHERE agent_id=$1 AND id=$2`, agentID, event.EventID).Scan(&existingType, &existingPayload); err != nil {
+			var sameContent bool
+			if err = tx.QueryRow(ctx, `SELECT schema_version=$2 AND trap_id=$3 AND agent_id=$4 AND service_id=$5 AND session_id IS NOT DISTINCT FROM NULLIF($6,'')::uuid AND profile_id IS NOT DISTINCT FROM NULLIF($7,'')::uuid AND applied_revision IS NOT DISTINCT FROM $8 AND event_type=$9 AND occurred_at=$10 AND source_ip IS NOT DISTINCT FROM NULLIF($11,'')::inet AND source_port IS NOT DISTINCT FROM $12 AND destination_port=$13 AND protocol=$14 AND payload=$15::jsonb FROM events WHERE agent_id=$4 AND id=$1`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&sameContent); err != nil {
 				fail(w, r, 503, "not_ready", "event identity could not be checked", nil)
 				return
 			}
-			if existingType != event.EventType || string(existingPayload) != string(payload) {
+			if !sameContent {
 				fail(w, r, 409, "event_conflict", "event ID already exists with different content", nil)
 				return
 			}

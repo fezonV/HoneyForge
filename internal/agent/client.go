@@ -125,7 +125,7 @@ func (c *Client) FetchConfig(ctx context.Context, state *State) (*ConfigResponse
 	if err != nil {
 		return nil, err
 	}
-	if result.TrapID != state.TrapID || result.ProfileID == "" || result.Revision < 1 {
+	if result.TrapID != state.TrapID || !contracts.ValidID(result.ProfileID) || result.Revision < 1 || len(contracts.ValidateProfile(result.Config)) > 0 {
 		return nil, errors.New("center returned an invalid configuration response")
 	}
 	return &result, nil

@@ -64,7 +64,18 @@ func (a *HTTPDecoyAdapter) call(ctx context.Context, method, path string, input,
 }
 
 func (a *HTTPDecoyAdapter) ApplyConfiguration(ctx context.Context, cfg ConfigResponse) error {
-	return a.call(ctx, http.MethodPost, "/internal/config", cfg, nil)
+	var ack struct {
+		TrapID    string `json:"trap_id"`
+		ProfileID string `json:"profile_id"`
+		Revision  int    `json:"revision"`
+	}
+	if err := a.call(ctx, http.MethodPost, "/internal/config", cfg, &ack); err != nil {
+		return err
+	}
+	if ack.TrapID != cfg.TrapID || ack.ProfileID != cfg.ProfileID || ack.Revision != cfg.Revision {
+		return fmt.Errorf("decoy IPC acknowledged a different configuration")
+	}
+	return nil
 }
 func (a *HTTPDecoyAdapter) Start(ctx context.Context) error {
 	return a.call(ctx, http.MethodPost, "/internal/start", struct{}{}, nil)
