@@ -269,7 +269,8 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect.poll(async () => (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items.some((event) => event.event_type === 'command.received')).toBe(true);
   if (dockerNode) {
     const events = (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items;
-    expect(events.filter((event) => event.event_type === 'command.received').every((event) => event.source_ip === agentHost)).toBe(true);
+    // PostgreSQL inet serialization can include the host mask (/32 or /128).
+    expect(events.filter((event) => event.event_type === 'command.received').every((event) => event.source_ip?.split('/')[0] === agentHost)).toBe(true);
   }
   await card.getByRole('button', { name: 'Остановить', exact: true }).click();
   await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('stopped');
