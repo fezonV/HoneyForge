@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Eye, Code, AlertTriangle } from 'lucide-react';
 import { ProfileConfig, CreateProfileRequest } from '../../../api/types';
-import { DecoyPreviewStub } from './DecoyPreviewStub';
+import { DecoyPreviewFrame } from '../preview/DecoyPreviewFrame';
 
 interface Step5Props {
   name: string;
@@ -49,7 +49,7 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Eye className="w-3.5 h-3.5" /> Предпросмотр (заглушка)
+            <Eye className="w-3.5 h-3.5" /> Предпросмотр (TL-01)
           </button>
           <button
             type="button"
@@ -115,7 +115,7 @@ export const Step5ReviewPreview: React.FC<Step5Props> = ({
 
       {/* Main Tab Content */}
       {activeTab === 'preview' ? (
-        <DecoyPreviewStub name={name} config={config} />
+        <DecoyPreviewFrame name={name} config={config} />
       ) : (
         <div className="space-y-2">
           <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 text-xs font-mono overflow-x-auto max-h-[500px] leading-relaxed">

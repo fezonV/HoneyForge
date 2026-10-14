@@ -408,6 +408,7 @@ export const api = {
           decoy_path: '/static/bundle.js',
           hidden_service_name: 'systemd-timesyncd-worker',
         },
+        config: current.config,
         created_at: p.created_at,
         updated_at: p.updated_at,
         traps_count: 0,
