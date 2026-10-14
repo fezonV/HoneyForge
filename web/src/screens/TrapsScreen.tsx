@@ -8,6 +8,7 @@ import { LevelBadge, StatusBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
 import { EmptyState, ErrorState, LoadingSkeleton } from '../components/common/StateViews';
+import { TrapControlPanel } from '../components/traps/TrapControlPanel';
 
 const dateText = (value?: string) => value ? new Date(value).toLocaleString('ru-RU', { timeZoneName: 'short' }) : 'Никогда';
 const serviceText = (value?: string) => ({ running: 'Работает', stopped: 'Остановлен', degraded: 'Работает с ошибками', error: 'Ошибка', unknown: 'Неизвестно' }[value || 'unknown'] || 'Неизвестно');
@@ -24,12 +25,13 @@ function progress(trap: Trap): string {
 }
 
 export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeRevision = 0 }) => {
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const { notify } = useNotification();
   const [traps, setTraps] = useState<Trap[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshedAt, setRefreshedAt] = useState<string>();
   const [step, setStep] = useState<number | null>(null);
   const [profileId, setProfileId] = useState('');
   const [revision, setRevision] = useState(0);
@@ -94,6 +96,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
       setTraps(enriched);
       setProfiles(nextProfiles);
       setError(null);
+      setRefreshedAt(new Date().toISOString());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить парк ловушек');
     } finally {
@@ -235,21 +238,6 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
     } finally { setBusy(false); }
   };
 
-  const sendCommand = async (trap: Trap, type: 'start' | 'stop' | 'apply_profile') => {
-    if (role !== 'operator' || busy || !trap.profile_id || !trap.desired_revision) return;
-    setBusy(true);
-    try {
-      const result = await api.traps.sendCommand(trap.id, type, {
-        expected_profile_id: trap.profile_id, expected_revision: trap.desired_revision, ttl_seconds: 300,
-      });
-      notify('info', 'Команда принята в очередь', `${result.status}. Выполнение агентом пока не подтверждено.`);
-      setCommandRevision((value) => value + 1);
-      await refresh();
-    } catch (cause) {
-      notify('error', 'Команда отклонена', cause instanceof Error ? cause.message : 'Неизвестная ошибка');
-    } finally { setBusy(false); }
-  };
-
   const closeWizard = () => {
     if (busy) return;
     setStep(null); setToken(null); setCreated(null); setSubmitError(''); setBundleError(''); setName(''); setNode('');
@@ -280,8 +268,9 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
       <label>Профиль <select className="border rounded ml-2 p-1" value={profileFilter} onChange={(e) => setProfileFilter(e.target.value)}><option value="all">Все</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     </div>
     {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Узел / Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3">{trap.profile_id ? <LevelBadge level={trap.level} /> : '—'}<div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs"><div>{trap.deployment_node || 'Узел не указан'}</div>{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}
-    {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>Узел запуска: {selected.deployment_node || 'Не указан'}</p>{selected.agent_id && <p className="font-mono text-xs">agent_id: {selected.agent_id}</p>}<p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{selected.registration_status !== 'registered' && !selected.last_seen_at && <Button size="sm" disabled={busy} onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => { setBundleError(''); setBundleTrap(selected); }}>Комплект запуска</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'apply_profile')}>Применить профиль</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'start')}>Запустить</Button><Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => sendCommand(selected, 'stop')}>Остановить</Button></div>}</section>}
+    {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>Узел запуска: {selected.deployment_node || 'Не указан'}</p>{selected.agent_id && <p className="font-mono text-xs">agent_id: {selected.agent_id}</p>}<p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{selected.registration_status !== 'registered' && !selected.last_seen_at && <Button size="sm" disabled={busy} onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => { setBundleError(''); setBundleTrap(selected); }}>Комплект запуска</Button></div>}</section>}
     {selected && <RegistrationHistory attempts={registrationAttempts} error={registrationError} />}
+    {selected && <TrapControlPanel key={`${selected.id}:${user?.id}:${role}`} trap={selected} profiles={profiles} commands={commands} updatedAt={refreshedAt} fresh={!loading && !error && !commandsError && !commandsLoading} onChanged={() => { setCommandRevision((value) => value + 1); void refresh(); }} />}
     {selected && <CommandHistory commands={commands} error={commandsError} loading={commandsLoading} />}
     {step !== null && role === 'operator' && <Modal isOpen onClose={closeWizard} title="Новый экземпляр" description={`Шаг ${step + 1} из 4`} maxWidth="xl"><div className="space-y-4 text-sm">
       {step === 0 && <><label className="block">Профиль<select className="block w-full border rounded p-2 mt-1" aria-label="Профиль" value={profileId} onChange={(e) => { setProfileId(e.target.value); setRequestedRevision(null); }}><option value="">Выберите профиль</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.level})</option>)}</select></label>{revisionError && <p role="alert" className="text-rose-700">{revisionError}</p>}<label className="block">Версия<select className="block w-full border rounded p-2 mt-1" aria-label="Версия" value={revision} onChange={(e) => setRevision(Number(e.target.value))}>{revisions.map((r) => <option key={r.revision} value={r.revision}>Revision {r.revision}</option>)}</select></label><Button disabled={revisionLoading || !chosenRevision} onClick={() => setStep(1)}>Далее</Button></>}
@@ -307,10 +296,10 @@ const CommandHistory: React.FC<{ commands: TrapCommand[]; error: string; loading
     {loading ? <p>Загрузка команд…</p> : commands.length === 0 && !error ? <p className="text-sm text-slate-500">Команды ещё не отправлены.</p> : null}
     {commands.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm text-left" aria-label="Последние команды ловушки">
       <thead className="text-slate-600"><tr><th className="p-2">Команда</th><th className="p-2">Версия</th><th className="p-2">Результат</th><th className="p-2">Создана / срок действия</th></tr></thead>
-      <tbody>{commands.map((command) => <tr key={command.id} className="border-t align-top">
+      <tbody>{commands.slice(0, 10).map((command) => <tr key={command.id} className="border-t align-top">
         <td className="p-2">{actions[command.type] || command.type}<div className="text-xs font-mono break-all">{command.id}</div></td>
         <td className="p-2">{command.target_revision ?? '—'}</td>
-        <td className="p-2">{states[command.status] || command.status}{command.error && <p className="text-rose-700 whitespace-pre-wrap break-words">{command.error}</p>}</td>
+        <td className={`p-2 ${command.status === 'applied' ? 'text-emerald-700' : command.status === 'failed' ? 'text-rose-700' : 'text-slate-700'}`}>{states[command.status] || command.status}{command.status === 'expired' && <p>Команда не выполнена до истечения срока и больше не должна исполняться.</p>}{command.error && <p className="text-rose-700 whitespace-pre-wrap break-words">{command.error}</p>}</td>
         <td className="p-2">{dateText(command.created_at)}<br />до {dateText(command.expires_at)}</td>
       </tr>)}</tbody>
     </table></div>}

@@ -141,12 +141,27 @@ export interface Trap {
   last_seen_at?: string;
   agent_status?: string;
   service_status?: string;
+  telemetry?: AgentTelemetry;
   desired_profile_id?: string | null;
   desired_revision?: number | null;
   applied_profile_id?: string | null;
   created_at?: string;
   attacks_count_24h: number;
   deployment_bindings?: DeploymentBinding[];
+}
+
+export interface AgentTelemetry {
+  queue_depth: number;
+  queue_limit: number;
+  quarantined: number;
+  quarantine_reason?: string;
+  sent_events: number;
+  delivery_errors: number;
+  delivery_retries: number;
+  storage_errors: number;
+  storage_error?: string;
+  delivery_error?: string;
+  degraded: boolean;
 }
 
 export interface TrapCommand {
