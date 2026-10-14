@@ -1,6 +1,0 @@
-{
-  "type": "event.created",
-  "id": "4fa20c0a-b91e-4e93-a074-2205ba0d3c31",
-  "occurred_at": "2026-10-12T12:00:00Z",
-  "data": { "trap_id": "8d755447-d566-4e2a-9c22-1349256e6d9a", "event_type": "http.request" }
-}

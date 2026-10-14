@@ -1,6 +1,0 @@
-{
-  "name": "lab-web-01",
-  "deployment_bindings": [
-    { "service_id": "web", "host_port": 18080, "bind_address": "127.0.0.1" }
-  ]
-}
