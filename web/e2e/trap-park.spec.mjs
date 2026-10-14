@@ -199,6 +199,10 @@ async function startRuntime({ trap, token, config, artifactPath }) {
     await run('docker', ['exec', dockerNode, `${bundleDirectory}/install.sh`,
       '--ca-file', `${bundleDirectory}/trusted-center-ca.pem`, '--enrollment-token-file', `${bundleDirectory}/enrollment-input`,
       '--build-ca-file', '/etc/ssl/certs/ca-certificates.crt']);
+    // The visitor gateway must not give the decoy an outbound management route.
+    await run('docker', ['exec', dockerNode, 'docker', 'compose', '-f', `${bundleDirectory}/compose.yaml`,
+      'exec', '-T', 'decoy', 'sh', '-c', 'if nc -z -w 2 "$1" "$2"; then exit 1; fi',
+      'isolation-check', agentHost, String(tlsServer.address().port)]);
     return { agent: { bundleDirectory, service: 'agent' }, decoy: { bundleDirectory, service: 'decoy' } };
   }
   const runtimeDir = join(dir, trap.id);
@@ -263,6 +267,10 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await visit.getByRole('button', { name: 'Выйти' }).click();
   await visitor.close();
   await expect.poll(async () => (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items.some((event) => event.event_type === 'command.received')).toBe(true);
+  if (dockerNode) {
+    const events = (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items;
+    expect(events.filter((event) => event.event_type === 'command.received').every((event) => event.source_ip === agentHost)).toBe(true);
+  }
   await card.getByRole('button', { name: 'Остановить', exact: true }).click();
   await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('stopped');
   expect((await getTrap(page, two.trap.id)).agent_status).toBe('online');

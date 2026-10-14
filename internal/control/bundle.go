@@ -261,6 +261,7 @@ func renderBundleCompose(data bundleTemplateData) ([]byte, error) {
 {{end}}    command:
       - "-bind"
       - "0.0.0.0"
+      - "-proxy-protocol"
       - "-admin-listen"
       - "0.0.0.0:9100"
       - "-admin-token-file"

@@ -4,6 +4,7 @@
 package visitorproxy
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -26,10 +27,19 @@ func Serve(listener net.Listener, target string) error {
 					return
 				}
 				defer upstream.Close()
-				// Bound idle/abandoned connections independently of the visitor.
+				// Bound connection lifetime independently of the visitor.
 				deadline := time.Now().Add(5 * time.Minute)
 				_ = incoming.SetDeadline(deadline)
 				_ = upstream.SetDeadline(deadline)
+				source := incoming.RemoteAddr().(*net.TCPAddr)
+				destination := incoming.LocalAddr().(*net.TCPAddr)
+				family := "TCP6"
+				if source.IP.To4() != nil {
+					family = "TCP4"
+				}
+				if _, err := fmt.Fprintf(upstream, "PROXY %s %s %s %d %d\r\n", family, source.IP, destination.IP, source.Port, destination.Port); err != nil {
+					return
+				}
 				done := make(chan struct{})
 				go func() {
 					_, _ = io.Copy(upstream, incoming)
