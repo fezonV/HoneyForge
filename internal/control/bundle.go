@@ -397,10 +397,11 @@ git -C source checkout --quiet --detach @@SHA@@
 [ "$(git -C source rev-parse HEAD)" = @@SHA@@ ]
 if [ -n "$build_ca_file" ]; then
  [ -r "$build_ca_file" ] || { printf 'Build CA file unavailable.\n' >&2; exit 1; }
- HF_BUILD_CA_FILE="$build_ca_file" docker compose -f compose.yaml -f compose.build-ca.yaml up --build -d
+ HF_BUILD_CA_FILE="$build_ca_file" docker compose -f compose.yaml -f compose.build-ca.yaml build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg http_proxy --build-arg https_proxy --build-arg no_proxy
 else
- docker compose -f compose.yaml up --build -d
+ docker compose -f compose.yaml build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg http_proxy --build-arg https_proxy --build-arg no_proxy
 fi
+docker compose -f compose.yaml up -d
 printf 'Bundle started. Confirm agent registration and applied profile in HoneyForge.\n'
 `
 	return strings.NewReplacer("@@SOURCE@@", shellQuote(sourceRepo), "@@SHA@@", shellQuote(sourceSHA)).Replace(script)

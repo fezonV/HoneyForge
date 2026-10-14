@@ -98,8 +98,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   for (const bundleDirectory of dockerBundles) {
-    await run('docker', ['exec', dockerNode, 'docker', 'compose', '-f', `${bundleDirectory}/compose.yaml`, 'down', '-v', '--remove-orphans']);
-    await run('docker', ['exec', dockerNode, 'rm', '-rf', bundleDirectory]);
+    await run('docker', ['exec', dockerNode, 'sh', '-c', 'set -e; if [ -f "$1/compose.yaml" ]; then docker compose -f "$1/compose.yaml" down -v --remove-orphans; fi; rm -rf "$1"', 'cleanup', bundleDirectory]);
   }
   await Promise.all(children.map(stop));
   if (tlsServer) { tlsServer.closeAllConnections(); await new Promise((done) => tlsServer.close(done)); }
@@ -165,7 +164,7 @@ async function createTrap(page, selected, name) {
 }
 async function startRuntime({ trap, token, config, artifactPath }) {
   if (dockerNode) {
-    const bundleDirectory = `/tmp/hf-bundle-${trap.id}`;
+    const bundleDirectory = `/root/hf-bundle-${trap.id}`;
     dockerBundles.push(bundleDirectory);
     const tokenPath = join(dir, `${trap.id}.enrollment`);
     writeFileSync(tokenPath, token, { mode: 0o600 });
