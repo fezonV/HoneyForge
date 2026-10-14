@@ -193,7 +193,7 @@ func renderTrapBundle(trapID, profileID string, revision int, trapName, deployme
 	readme := renderBundleReadme(trapName, trapID, profileID, revision, bindings, agentOrigin, sourceSHA)
 	return zipBundle(map[string]bundleFile{
 		"compose.yaml":             {data: compose},
-		"compose.build-ca.yaml":    {data: []byte("services:\n  agent:\n    build:\n      secrets: [proxy_ca]\n  decoy:\n    build:\n      secrets: [proxy_ca]\nsecrets:\n  proxy_ca:\n    file: ${HF_BUILD_CA_FILE:?Set HF_BUILD_CA_FILE}\n")},
+		"compose.build-ca.yaml":    {data: []byte("services:\n  agent:\n    build:\n      secrets: [proxy_ca]\n  decoy:\n    build:\n      secrets: [proxy_ca]\n  visitor:\n    build:\n      secrets: [proxy_ca]\nsecrets:\n  proxy_ca:\n    file: ${HF_BUILD_CA_FILE:?Set HF_BUILD_CA_FILE}\n")},
 		"decoy-config.json":        {data: decoyConfig},
 		"manifest.json":            {data: manifest},
 		"install.sh":               {data: []byte(install), mode: 0755},
@@ -273,12 +273,7 @@ func renderBundleCompose(data bundleTemplateData) ([]byte, error) {
     volumes:
       - ./decoy-config.json:/etc/honeyforge/decoy-config.json:ro
       - decoy_state:/var/lib/honeyforge
-    ports:
-{{range .Ports}}      - target: {{.TargetPort}}
-        published: {{q (printf "%d" .Published)}}
-        host_ip: {{q .HostAddress}}
-        protocol: tcp
-{{end}}    networks: [ipc, attack]
+    networks: [ipc, attack]
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     cap_drop: [ALL]
@@ -288,6 +283,37 @@ func renderBundleCompose(data bundleTemplateData) ([]byte, error) {
     pids_limit: 128
     depends_on:
       agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  visitor:
+    build:
+      context: ./source
+      dockerfile: Dockerfile.decoy
+{{if .NeedsBindCap}}    cap_add: [NET_BIND_SERVICE]
+{{end}}    entrypoint: ["/usr/local/bin/honeyforge-visitor-proxy"]
+    command:
+{{range .Ports}}      - {{q (printf "%d" .TargetPort)}}
+{{end}}    ports:
+{{range .Ports}}      - target: {{.TargetPort}}
+        published: {{q (printf "%d" .Published)}}
+        host_ip: {{q .HostAddress}}
+        protocol: tcp
+{{end}}    networks: [attack, visitor]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    cpus: 1.0
+    pids_limit: 128
+    depends_on:
+      decoy:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "kill -0 1"]
@@ -315,6 +341,8 @@ networks:
     internal: true
   attack:
     internal: true
+  visitor:
+    driver: bridge
   management:
     driver: bridge
 `

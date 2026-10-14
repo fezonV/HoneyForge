@@ -15,6 +15,25 @@ const dockerNode = process.env.HF_BUNDLE_DOCKER_NODE;
 const agentHost = dockerNode ? execFileSync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim() : '127.0.0.1';
 const publicHost = dockerNode ? execFileSync('docker', ['inspect', dockerNode, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'], { encoding: 'utf8' }).trim() : '127.0.0.1';
 const dockerBundles = [];
+const visitorForwards = [];
+// Keep browser traffic to this disposable local Docker node on loopback; the
+// browser's inherited Internet proxy cannot route private Docker addresses.
+async function visitorURL(port) {
+  if (!dockerNode) return `http://127.0.0.1:${port}`;
+  const sockets = new Set();
+  const forward = net.createServer((incoming) => {
+    const upstream = net.connect(port, publicHost);
+    for (const socket of [incoming, upstream]) {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => { incoming.destroy(); upstream.destroy(); });
+    }
+    incoming.pipe(upstream).pipe(incoming);
+  });
+  await new Promise((done) => forward.listen(0, '127.0.0.1', done));
+  visitorForwards.push({ forward, sockets });
+  return `http://127.0.0.1:${forward.address().port}`;
+}
 const run = (command, args) => new Promise((done, reject) => {
   const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -97,6 +116,10 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  for (const { forward, sockets } of visitorForwards) {
+    for (const socket of sockets) socket.destroy();
+    await new Promise((done) => forward.close(done));
+  }
   for (const bundleDirectory of dockerBundles) {
     await run('docker', ['exec', dockerNode, 'sh', '-c', 'set -e; if [ -f "$1/compose.yaml" ]; then docker compose -f "$1/compose.yaml" down -v --remove-orphans; fi; rm -rf "$1"', 'cleanup', bundleDirectory]);
   }
@@ -226,7 +249,7 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect(card).toContainText('Сервис работает');
   const visitor = await browser.newContext();
   const visit = await visitor.newPage();
-  const publicURL = `http://${publicHost}:${medium.config.services[0].port}`;
+  const publicURL = await visitorURL(medium.config.services[0].port);
   await visit.goto(publicURL);
   await visit.getByLabel('Имя пользователя').fill('reader');
   await visit.getByLabel('Пароль', { exact: true }).fill('synthetic-only');
@@ -244,7 +267,7 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('stopped');
   expect((await getTrap(page, two.trap.id)).agent_status).toBe('online');
   await expect(card).toContainText('Сервис остановлен');
-  expect((await fetch(`http://${publicHost}:${low.config.services[0].port}/`)).status).toBe(200);
+  expect((await fetch(await visitorURL(low.config.services[0].port))).status).toBe(200);
   await page.reload();
   await expect(card).toContainText('Сервис остановлен');
   await stop(mediumRuntime.agent);

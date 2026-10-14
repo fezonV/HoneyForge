@@ -5,13 +5,15 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then SSL_CERT_FILE=/run/secrets/proxy_ca go mod download; else go mod download; fi
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-decoy ./cmd/decoy
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-decoy ./cmd/decoy \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/honeyforge-visitor-proxy ./cmd/visitor-proxy
 
 FROM alpine:3.22
 RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge \
     && mkdir -p /var/lib/honeyforge /etc/honeyforge \
     && chown -R honeyforge:honeyforge /var/lib/honeyforge /etc/honeyforge
 COPY --from=build /out/honeyforge-decoy /usr/local/bin/honeyforge-decoy
+COPY --from=build /out/honeyforge-visitor-proxy /usr/local/bin/honeyforge-visitor-proxy
 COPY scripts/decoy-entrypoint.sh /usr/local/bin/honeyforge-decoy-entrypoint
 RUN chmod 0555 /usr/local/bin/honeyforge-decoy-entrypoint
 USER honeyforge
