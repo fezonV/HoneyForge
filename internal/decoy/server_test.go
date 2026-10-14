@@ -614,7 +614,7 @@ func TestLowFilesExposeCatalogButNeverFileContent(t *testing.T) {
 	server, _ := New(testConfig("low"), &memorySink{})
 	server.SetRunning(true)
 	catalog := serve(t, server, "/files", "", nil)
-	if catalog.Code != 200 || catalog.Body.String() != `{"files":["reports/summary.txt"]}` {
+	if catalog.Code != 200 || strings.TrimSpace(catalog.Body.String()) != `{"files":["reports/summary.txt"]}` {
 		t.Fatalf("low catalog=%d %q", catalog.Code, catalog.Body.String())
 	}
 	for _, path := range []string{"/files?path=reports/summary.txt", "/files?path=reports/summary.txt&download=1"} {

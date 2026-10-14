@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	decoytemplates "honeyforge/decoy-templates"
 	"honeyforge/internal/contracts"
 )
 
@@ -71,7 +71,14 @@ func NewWithStore(cfg Configuration, sink EventSink, store ConfigurationStore) (
 func (s *Server) PublicHandler(serviceID string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { s.handleRoot(w, r, serviceID) })
-	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) { s.handleLoginPage(w, r, serviceID) })
+	mux.HandleFunc("GET /assets/archive.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = w.Write(decoytemplates.Stylesheet())
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.page(w, r, serviceID, "not-found", "Документ не найден", http.StatusNotFound, false, "", "", "")
+	})
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) { s.handleLogin(w, r, serviceID) })
 	mux.HandleFunc("POST /logout", func(w http.ResponseWriter, r *http.Request) { s.handleLogout(w, r, serviceID) })
 	mux.HandleFunc("GET /files", func(w http.ResponseWriter, r *http.Request) { s.handleFiles(w, r, serviceID) })
@@ -82,8 +89,8 @@ func (s *Server) PublicHandler(serviceID string) http.Handler {
 		defer s.lifecycle.RUnlock()
 		cfg := s.Snapshot()
 		r = r.WithContext(context.WithValue(r.Context(), configContextKey{}, cfg))
-		if !s.isStarted() {
-			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		if !s.isStarted() && r.URL.Path != "/assets/archive.css" {
+			s.page(w, r, serviceID, "stopped", "Сервис временно недоступен", http.StatusServiceUnavailable, false, "", "", "")
 			return
 		}
 		if err := connectionError(r.Context()); err != nil {
@@ -241,27 +248,16 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request, serviceID st
 			return
 		}
 	}
-	title := cfg.Config.VisibleTexts.Title
-	service := configuredService(cfg.Config.Services, serviceID)
-	if title == "" {
-		title = service.Name
-	}
-	banner := service.Banner
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = rootTemplate.Execute(w, struct {
-		Title, Banner string
-		Medium        bool
-	}{title, banner, cfg.Config.Level == "medium"})
+	s.page(w, r, serviceID, "catalog", "", http.StatusOK, cfg.Config.Level == "medium", "", "", "")
 }
 
-func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request, serviceID string) {
 	cfg := requestConfiguration(r)
 	if cfg.Config.Level != "medium" {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = loginTemplate.Execute(w, struct{ Title, Prompt string }{cfg.Config.VisibleTexts.Title, cfg.Config.VisibleTexts.LoginPrompt})
+	s.page(w, r, serviceID, "login", "", http.StatusOK, false, "", "", "")
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, serviceID string) {
@@ -336,7 +332,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, serviceID s
 		if failure == "" {
 			failure = "Authentication failed"
 		}
-		http.Error(w, failure, http.StatusUnauthorized)
+		if wantsHTML(r) {
+			s.page(w, r, serviceID, "login", failure, http.StatusUnauthorized, false, "", "", "")
+		} else {
+			http.Error(w, failure, http.StatusUnauthorized)
+		}
 		return
 	}
 	if err := s.emit(r, serviceID, "session.started", sid, map[string]any{"username": username, "sensitive_fields": []string{"username"}}); err != nil {
@@ -361,14 +361,8 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request, serviceID s
 	cfg := requestConfiguration(r)
 	sid, ok := "", false
 	if cfg.Config.Level == "medium" {
-		var authErr error
-		sid, ok, authErr = s.authenticated(r, serviceID)
-		if authErr != nil {
-			http.Error(w, "service unavailable", 503)
-			return
-		}
+		sid, ok = s.requireVisitor(w, r, serviceID)
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -377,19 +371,24 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request, serviceID s
 			http.Error(w, "service unavailable", 503)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		fmt.Fprint(w, "{\"files\":[")
-		for i, file := range cfg.Config.FakeFS {
-			if i > 0 {
-				fmt.Fprint(w, ",")
-			}
-			fmt.Fprintf(w, "%q", file.Path)
+		if wantsHTML(r) {
+			s.page(w, r, serviceID, "catalog", cfg.Config.VisibleTexts.Success, http.StatusOK, cfg.Config.Level == "medium", "", "", "")
+			return
 		}
-		fmt.Fprint(w, "]}")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		paths := make([]string, 0, len(cfg.Config.FakeFS))
+		for _, file := range cfg.Config.FakeFS {
+			paths = append(paths, file.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": paths})
 		return
 	}
 	if cfg.Config.Level != "medium" {
-		http.Error(w, "file content unavailable", http.StatusForbidden)
+		if wantsHTML(r) {
+			s.page(w, r, serviceID, "unavailable", "Материал недоступен", http.StatusForbidden, false, "", "", "")
+		} else {
+			http.Error(w, "file content unavailable", http.StatusForbidden)
+		}
 		return
 	}
 	decoded, decodeErr := url.PathUnescape(requested)
@@ -399,7 +398,11 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request, serviceID s
 	}
 	file, ok := fakeFile(cfg.Config.FakeFS, decoded)
 	if !ok {
-		http.NotFound(w, r)
+		if wantsHTML(r) {
+			s.page(w, r, serviceID, "not-found", "Документ не найден", http.StatusNotFound, true, "", "", "")
+		} else {
+			http.NotFound(w, r)
+		}
 		return
 	}
 	download := r.URL.Query().Get("download") == "1"
@@ -413,31 +416,24 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request, serviceID s
 	}
 	if download {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+safeFilename(file.Path)+`"`)
+	} else if wantsHTML(r) && r.URL.Query().Get("view") == "1" {
+		s.page(w, r, serviceID, "file", "", http.StatusOK, true, file.Path, file.Content, "")
+		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(file.Content))
 }
 
 func (s *Server) handleConsolePage(w http.ResponseWriter, r *http.Request, serviceID string) {
-	if _, ok, err := s.authenticated(r, serviceID); err != nil {
-		http.Error(w, "service unavailable", 503)
-		return
-	} else if !ok {
-		http.Error(w, "unauthorized", 401)
+	if _, ok := s.requireVisitor(w, r, serviceID); !ok {
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = consoleTemplate.Execute(w, nil)
+	s.page(w, r, serviceID, "console", "", http.StatusOK, true, "", "", "")
 }
 
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request, serviceID string) {
-	sid, ok, authErr := s.authenticated(r, serviceID)
-	if authErr != nil {
-		http.Error(w, "service unavailable", 503)
-		return
-	}
+	sid, ok := s.requireVisitor(w, r, serviceID)
 	if !ok {
-		http.Error(w, "unauthorized", 401)
 		return
 	}
 	if err := parseBoundedForm(w, r); err != nil {
@@ -485,6 +481,10 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request, serviceID
 	telemetryOutput, truncated := limitUTF8(output, 8192)
 	if err := s.emit(r, serviceID, "command.received", sid, map[string]any{"command": input, "output": telemetryOutput, "output_truncated": truncated}); err != nil {
 		http.Error(w, "service unavailable", 503)
+		return
+	}
+	if wantsHTML(r) {
+		s.page(w, r, serviceID, "console", "", http.StatusOK, true, "", "", output)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -758,10 +758,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
-
-var rootTemplate = template.Must(template.New("root").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>{{.Title}}</title><h1>{{.Title}}</h1><p>{{.Banner}}</p>{{if .Medium}}<a href="/files">Архив</a>{{end}}</html>`))
-var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>{{.Title}}</title><h1>{{.Title}}</h1><form method="post" action="/login"><label>{{.Prompt}} <input name="username" autocomplete="username"></label><label>Пароль <input type="password" name="password" autocomplete="current-password"></label><button>Войти</button></form></html>`))
-var consoleTemplate = template.Must(template.New("console").Parse(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Консоль</title><form method="post"><label>Команда <input name="command"></label><button>Выполнить</button></form></html>`))
