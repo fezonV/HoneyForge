@@ -328,6 +328,36 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Trap' }
+  /api/v1/traps/{id}/registration-attempts:
+    get:
+      operationId: getTrapRegistrationAttempts
+      summary: Read the latest 100 persisted registration attempts, newest first
+      description: >-
+        Operator and viewer can read this history. Tokens, hashes, raw requests
+        and credentials are never returned. Unknown trap IDs and requests that
+        never reached the enrollment API (TLS or network failure) are not recorded.
+        Retention is 100 attempts per trap; cursors are opaque and chronological.
+      tags: [Agent enrollment]
+      security: [{ operatorSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UUID' }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 512 } }
+      responses:
+        '200':
+          description: Persisted attempts ordered by created_at and ID descending
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/RegistrationAttempt' } }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+        '503': { $ref: '#/components/responses/ApiError' }
   /api/v1/traps/{id}/enrollment-token:
     post:
       operationId: post_api_v1_traps_by_id_enrollment_token
@@ -840,12 +870,26 @@ components:
         - type: object
           properties:
             items: { type: array, items: { $ref: '#/components/schemas/Trap' } }
+    RegistrationAttempt:
+      type: object
+      additionalProperties: false
+      required: [id, trap_id, outcome, reason, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        trap_id: { type: string, format: uuid }
+        outcome: { type: string, enum: [registered, rejected] }
+        reason: { type: string, enum: [registered, invalid_token, expired_token, inactive_token, already_enrolled] }
+        created_at: { type: string, format: date-time }
     Trap:
       type: object
-      required: [id, name, desired_profile_id, desired_revision, applied_profile_id, applied_revision, agent_status, service_status, last_seen, deployment_bindings, created_at]
+      required: [deployment_node, registration_status, id, name, desired_profile_id, desired_revision, applied_profile_id, applied_revision, agent_status, service_status, last_seen, deployment_bindings, created_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+        deployment_node: { type: string, maxLength: 253, description: Operator-supplied prepared-node label; at most 253 UTF-8 bytes; empty for legacy traps }
+        registration_status: { type: string, enum: [pending, rejected, registered], description: Registration is independent of heartbeat and service state }
+        agent_id: { type: string, format: uuid }
+        last_registration_attempt: { $ref: '#/components/schemas/RegistrationAttempt' }
         desired_profile_id: { type: [string, 'null'], format: uuid }
         desired_revision: { type: [integer, 'null'] }
         applied_profile_id: { type: [string, 'null'], format: uuid }
@@ -870,6 +914,7 @@ components:
       required: [name, deployment_bindings]
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
+        deployment_node: { type: string, maxLength: 253, description: Optional trimmed node label; maximum 253 UTF-8 bytes; control characters rejected }
         deployment_bindings: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/DeploymentBinding' } }
     AssignProfileRequest:
       type: object

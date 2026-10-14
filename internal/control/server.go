@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	m.Handle("GET /api/v1/profiles/{id}/revisions/{revision}/sensitive", s.auth(false, "operator", http.HandlerFunc(s.getSensitiveRevision)))
 	m.Handle("GET /api/v1/traps", s.auth(false, "", http.HandlerFunc(s.listTraps)))
 	m.Handle("POST /api/v1/traps", s.auth(true, "operator", http.HandlerFunc(s.createTrap)))
+	m.Handle("GET /api/v1/traps/{id}/registration-attempts", s.auth(false, "", http.HandlerFunc(s.listRegistrationAttempts)))
 	m.Handle("GET /api/v1/traps/{id}", s.auth(false, "", http.HandlerFunc(s.getTrap)))
 	m.Handle("PUT /api/v1/traps/{id}/profile", s.auth(true, "operator", http.HandlerFunc(s.assignProfile)))
 	m.Handle("DELETE /api/v1/traps/{id}/profile", s.auth(true, "operator", http.HandlerFunc(s.detachProfile)))

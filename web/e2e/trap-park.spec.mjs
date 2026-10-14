@@ -11,6 +11,18 @@ import { readFileSync } from 'node:fs';
 // Deliberately requires a separate disposable database. No API or agent mocks.
 test.skip(!process.env.TEST_DATABASE_URL, 'Set TEST_DATABASE_URL to a disposable PostgreSQL database');
 const root = resolve(import.meta.dirname, '../..');
+const dockerNode = process.env.HF_BUNDLE_DOCKER_NODE;
+const agentHost = dockerNode ? execFileSync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim() : '127.0.0.1';
+const publicHost = dockerNode ? execFileSync('docker', ['inspect', dockerNode, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'], { encoding: 'utf8' }).trim() : '127.0.0.1';
+const dockerBundles = [];
+const run = (command, args) => new Promise((done, reject) => {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', (data) => { output = (output + data).slice(-5000); });
+  child.stderr.on('data', (data) => { output = (output + data).slice(-5000); });
+  child.once('error', reject);
+  child.once('exit', (code) => code === 0 ? done(output) : reject(new Error(`${command} exited ${code}: ${output}`)));
+});
 const username = `fe2_${Date.now()}`;
 const password = 'Local-e2e-only-password!';
 let dir, tlsServer, center;
@@ -41,6 +53,10 @@ const launch = (binary, args, env = process.env) => {
   return child;
 };
 const stop = async (child) => {
+  if (child?.bundleDirectory) {
+    await run('docker', ['exec', dockerNode, 'docker', 'compose', '-f', `${child.bundleDirectory}/compose.yaml`, 'stop', child.service]);
+    return;
+  }
   if (!child || child.exitCode !== null) return;
   child.kill('SIGTERM');
   await Promise.race([
@@ -64,7 +80,7 @@ test.beforeAll(async () => {
   }
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
     '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'ca.pem'), '-subj', '/CN=localhost',
-    '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'pipe' });
+    '-addext', `subjectAltName=IP:127.0.0.1,IP:${agentHost}`], { stdio: 'pipe' });
   tlsServer = https.createServer({ key: readFileSync(join(dir, 'key.pem')), cert: readFileSync(join(dir, 'ca.pem')) }, (req, res) => {
     const upstream = http.request({ hostname: '127.0.0.1', port: 8081, path: req.url, method: req.method, headers: req.headers }, (response) => {
       res.writeHead(response.statusCode, response.headers); response.pipe(res);
@@ -72,15 +88,19 @@ test.beforeAll(async () => {
     upstream.on('error', () => { res.writeHead(503); res.end(); });
     req.pipe(upstream);
   });
-  await new Promise((done) => tlsServer.listen(0, '127.0.0.1', done));
+  await new Promise((done) => tlsServer.listen(0, dockerNode ? '0.0.0.0' : '127.0.0.1', done));
   center = launch(join(dir, 'control'), [], { ...env,
-    AGENT_ORIGIN: `https://127.0.0.1:${tlsServer.address().port}`,
+    AGENT_ORIGIN: `https://${agentHost}:${tlsServer.address().port}`,
     HF_SOURCE_REVISION: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   });
   await waitFor(async () => (await fetch('http://127.0.0.1:8081/readyz')).ok);
 });
 
 test.afterAll(async () => {
+  for (const bundleDirectory of dockerBundles) {
+    await run('docker', ['exec', dockerNode, 'docker', 'compose', '-f', `${bundleDirectory}/compose.yaml`, 'down', '-v', '--remove-orphans']);
+    await run('docker', ['exec', dockerNode, 'rm', '-rf', bundleDirectory]);
+  }
   await Promise.all(children.map(stop));
   if (tlsServer) { tlsServer.closeAllConnections(); await new Promise((done) => tlsServer.close(done)); }
   if (dir) rmSync(dir, { recursive: true, force: true });
@@ -121,6 +141,7 @@ async function createTrap(page, selected, name) {
   await dialog.getByLabel('Профиль', { exact: true }).selectOption(selected.id);
   await dialog.getByRole('button', { name: 'Далее' }).click();
   await dialog.getByLabel('Имя экземпляра').fill(name);
+  await dialog.getByLabel('Узел запуска', { exact: true }).fill(dockerNode || 'local-e2e-node');
   const response = page.waitForResponse((res) => res.url().endsWith('/api/v1/traps') && res.request().method() === 'POST');
   await dialog.getByRole('button', { name: 'Создать и назначить профиль' }).click();
   const trap = await (await response).json();
@@ -137,9 +158,27 @@ async function createTrap(page, selected, name) {
   expect(config.trap_id).toBe(trap.id);
   expect(config.profile_id).toBe(selected.id);
   await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
-  return { trap, token, config };
+  const artifactPath = join(dir, `${trap.id}.zip`);
+  await artifact.saveAs(artifactPath);
+  expect((await getTrap(page, trap.id)).deployment_node).toBe(dockerNode || 'local-e2e-node');
+  return { trap, token, config, artifactPath };
 }
-async function startRuntime({ trap, token, config }) {
+async function startRuntime({ trap, token, config, artifactPath }) {
+  if (dockerNode) {
+    const bundleDirectory = `/tmp/hf-bundle-${trap.id}`;
+    dockerBundles.push(bundleDirectory);
+    const tokenPath = join(dir, `${trap.id}.enrollment`);
+    writeFileSync(tokenPath, token, { mode: 0o600 });
+    await run('docker', ['exec', dockerNode, 'mkdir', '-m', '700', '-p', bundleDirectory]);
+    await run('docker', ['cp', artifactPath, `${dockerNode}:${bundleDirectory}/bundle.zip`]);
+    await run('docker', ['cp', tokenPath, `${dockerNode}:${bundleDirectory}/enrollment-input`]);
+    await run('docker', ['cp', join(dir, 'ca.pem'), `${dockerNode}:${bundleDirectory}/trusted-center-ca.pem`]);
+    await run('docker', ['exec', dockerNode, 'unzip', '-q', `${bundleDirectory}/bundle.zip`, '-d', bundleDirectory]);
+    await run('docker', ['exec', dockerNode, `${bundleDirectory}/install.sh`,
+      '--ca-file', `${bundleDirectory}/trusted-center-ca.pem`, '--enrollment-token-file', `${bundleDirectory}/enrollment-input`,
+      '--build-ca-file', '/etc/ssl/certs/ca-certificates.crt']);
+    return { agent: { bundleDirectory, service: 'agent' }, decoy: { bundleDirectory, service: 'decoy' } };
+  }
   const runtimeDir = join(dir, trap.id);
   // All files remain under the disposable temporary directory.
   const { mkdirSync } = await import('node:fs');
@@ -162,6 +201,7 @@ async function startRuntime({ trap, token, config }) {
 const getTrap = async (page, id) => (await page.request.get(`/api/v1/traps/${id}`)).json();
 
 test('real Low/Medium creation, bundles, agents, applied revision, stopped and offline', async ({ page, browser }) => {
+  if (dockerNode) test.setTimeout(900000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await login(page);
@@ -170,6 +210,13 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   const two = await createTrap(page, medium, `Medium ${username}`);
   const three = await createTrap(page, low, `Low two ${username}`);
   expect(three.trap.id).not.toBe(one.trap.id);
+  const rejected = await page.request.post('http://127.0.0.1:8081/agent/v1/enroll', { data: { trap_id: two.trap.id, token: 'invalid-enrollment-token-for-browser-check' } });
+  expect(rejected.status()).toBe(401);
+  await page.goto(`/#traps/${two.trap.id}`);
+  await expect(page.getByRole('region', { name: 'Карточка ловушки' })).toContainText('Отказ регистрации');
+  await expect(page.getByRole('region', { name: 'История регистрации' })).toContainText('Неверный токен');
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'История регистрации' })).toContainText('Неверный токен');
   const lowRuntime = await startRuntime(one), mediumRuntime = await startRuntime(two);
   await expect.poll(async () => (await getTrap(page, two.trap.id)).agent_status).toBe('online');
   await page.goto(`/#traps/${two.trap.id}`);
@@ -180,7 +227,7 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect(card).toContainText('Сервис работает');
   const visitor = await browser.newContext();
   const visit = await visitor.newPage();
-  const publicURL = `http://127.0.0.1:${medium.config.services[0].port}`;
+  const publicURL = `http://${publicHost}:${medium.config.services[0].port}`;
   await visit.goto(publicURL);
   await visit.getByLabel('Имя пользователя').fill('reader');
   await visit.getByLabel('Пароль', { exact: true }).fill('synthetic-only');
@@ -198,7 +245,7 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('stopped');
   expect((await getTrap(page, two.trap.id)).agent_status).toBe('online');
   await expect(card).toContainText('Сервис остановлен');
-  expect((await fetch(`http://127.0.0.1:${low.config.services[0].port}/`)).status).toBe(200);
+  expect((await fetch(`http://${publicHost}:${low.config.services[0].port}/`)).status).toBe(200);
   await page.reload();
   await expect(card).toContainText('Сервис остановлен');
   await stop(mediumRuntime.agent);

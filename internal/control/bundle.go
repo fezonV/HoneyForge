@@ -29,14 +29,15 @@ type bundlePort struct {
 }
 
 type bundleManifest struct {
-	TrapID      string                        `json:"trap_id"`
-	ProfileID   string                        `json:"profile_id"`
-	Revision    int                           `json:"profile_revision"`
-	SourceRepo  string                        `json:"source_repository"`
-	SourceSHA   string                        `json:"source_revision"`
-	AgentOrigin string                        `json:"agent_origin"`
-	Ports       []contracts.DeploymentBinding `json:"ports"`
-	CreatedAt   string                        `json:"created_at"`
+	TrapID         string                        `json:"trap_id"`
+	ProfileID      string                        `json:"profile_id"`
+	Revision       int                           `json:"profile_revision"`
+	DeploymentNode string                        `json:"deployment_node"`
+	SourceRepo     string                        `json:"source_repository"`
+	SourceSHA      string                        `json:"source_revision"`
+	AgentOrigin    string                        `json:"agent_origin"`
+	Ports          []contracts.DeploymentBinding `json:"ports"`
+	CreatedAt      string                        `json:"created_at"`
 }
 
 type bundleTemplateData struct {
@@ -67,12 +68,12 @@ func (s *Server) downloadTrapBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(context.Background())
 
-	var name string
+	var name, deploymentNode string
 	var profileID *string
 	var revision *int
 	var rawBindings, rawConfig []byte
-	err = tx.QueryRow(ctx, `SELECT name,desired_profile_id::text,desired_revision,deployment_bindings
-		FROM traps WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, trapID).Scan(&name, &profileID, &revision, &rawBindings)
+	err = tx.QueryRow(ctx, `SELECT name,deployment_node,desired_profile_id::text,desired_revision,deployment_bindings
+		FROM traps WHERE id=$1 AND deleted_at IS NULL FOR SHARE`, trapID).Scan(&name, &deploymentNode, &profileID, &revision, &rawBindings)
 	if noRows(err) {
 		fail(w, r, 404, "not_found", "trap not found", nil)
 		return
@@ -106,7 +107,7 @@ func (s *Server) downloadTrapBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artifact, err := renderTrapBundle(trapID, *profileID, *revision, name, config, bindings, s.agentOrigin, s.bundleSource, s.bundleRevision)
+	artifact, err := renderTrapBundle(trapID, *profileID, *revision, name, deploymentNode, config, bindings, s.agentOrigin, s.bundleSource, s.bundleRevision)
 	if err != nil {
 		fail(w, r, 500, "bundle_failed", "deployment bundle could not be rendered", nil)
 		return
@@ -132,7 +133,7 @@ func (s *Server) downloadTrapBundle(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(artifact)
 }
 
-func renderTrapBundle(trapID, profileID string, revision int, trapName string, config contracts.ProfileConfig, bindings []contracts.DeploymentBinding, agentOrigin, sourceRepo, sourceSHA string) ([]byte, error) {
+func renderTrapBundle(trapID, profileID string, revision int, trapName, deploymentNode string, config contracts.ProfileConfig, bindings []contracts.DeploymentBinding, agentOrigin, sourceRepo, sourceSHA string) ([]byte, error) {
 	if !contracts.ValidID(trapID) || !contracts.ValidID(profileID) || revision < 1 || !validHTTPSOrigin(agentOrigin) || !validHTTPSRepository(sourceRepo) || !gitRevisionRE.MatchString(sourceSHA) {
 		return nil, errors.New("invalid deployment bundle identity or source")
 	}
@@ -175,7 +176,7 @@ func renderTrapBundle(trapID, profileID string, revision int, trapName string, c
 		return nil, err
 	}
 	manifest, err := json.MarshalIndent(bundleManifest{
-		TrapID: trapID, ProfileID: profileID, Revision: revision, SourceRepo: sourceRepo,
+		TrapID: trapID, ProfileID: profileID, Revision: revision, DeploymentNode: deploymentNode, SourceRepo: sourceRepo,
 		SourceSHA: sourceSHA, AgentOrigin: agentOrigin, Ports: bindings, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, "", "  ")
 	if err != nil {
@@ -192,6 +193,7 @@ func renderTrapBundle(trapID, profileID string, revision int, trapName string, c
 	readme := renderBundleReadme(trapName, trapID, profileID, revision, bindings, agentOrigin, sourceSHA)
 	return zipBundle(map[string]bundleFile{
 		"compose.yaml":             {data: compose},
+		"compose.build-ca.yaml":    {data: []byte("services:\n  agent:\n    build:\n      secrets: [proxy_ca]\n  decoy:\n    build:\n      secrets: [proxy_ca]\nsecrets:\n  proxy_ca:\n    file: ${HF_BUILD_CA_FILE:?Set HF_BUILD_CA_FILE}\n")},
 		"decoy-config.json":        {data: decoyConfig},
 		"manifest.json":            {data: manifest},
 		"install.sh":               {data: []byte(install), mode: 0755},
@@ -223,6 +225,8 @@ func renderBundleCompose(data bundleTemplateData) ([]byte, error) {
       - {{q .TrapID}}
       - "-enrollment-token-file"
       - "/run/secrets/enrollment_token"
+      - "-ca-file"
+      - "/run/secrets/center_ca"
       - "-ipc-token-file"
       - "/run/secrets/decoy_agent_ipc_token"
       - "-decoy-token-file"
@@ -232,7 +236,7 @@ func renderBundleCompose(data bundleTemplateData) ([]byte, error) {
       HF_AGENT_STATE: "/var/lib/honeyforge/agent-state.json"
       HF_AGENT_QUEUE: "/var/lib/honeyforge/agent-events.sqlite"
       HF_DECOY_ADMIN_URL: "http://decoy:9100"
-    secrets: [enrollment_token, decoy_agent_ipc_token, agent_decoy_ipc_token]
+    secrets: [enrollment_token, decoy_agent_ipc_token, agent_decoy_ipc_token, center_ca]
     volumes: [agent_state:/var/lib/honeyforge]
     networks: [management, ipc]
     read_only: true
@@ -297,6 +301,8 @@ volumes:
   decoy_state:
 
 secrets:
+  center_ca:
+    file: ./secrets/center_ca.pem
   enrollment_token:
     file: ./secrets/enrollment_token
   decoy_agent_ipc_token:
@@ -329,63 +335,72 @@ func yamlQuote(value string) string {
 }
 
 func renderBundleInstaller(agentOrigin, trapID, sourceRepo, sourceSHA string) string {
-	return fmt.Sprintf(`#!/bin/sh
+	const script = `#!/bin/sh
 set -eu
+umask 077
+ca_file=/etc/ssl/certs/ca-certificates.crt
+token_file=
+build_ca_file=
+while [ "$#" -gt 0 ]; do
+ case "$1" in
+  --ca-file|--enrollment-token-file|--build-ca-file)
+   [ "$#" -ge 2 ] || { printf 'Missing file argument.\n' >&2; exit 1; }
+   case "$2" in /*) input_file="$2" ;; *) input_file="$PWD/$2" ;; esac
+   case "$1" in --ca-file) ca_file="$input_file" ;; --enrollment-token-file) token_file="$input_file" ;; --build-ca-file) build_ca_file="$input_file" ;; esac
+   shift 2 ;;
+  *) printf 'Usage: ./install.sh [--ca-file trusted-ca.pem] [--enrollment-token-file private-file] [--build-ca-file proxy-ca-bundle.pem]\n' >&2; exit 1 ;;
+ esac
+done
 cd "$(dirname "$0")"
-
-if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
-	printf 'Docker Engine with the Compose plugin is required.\n' >&2
-	exit 1
+for tool in docker git openssl stty; do
+ command -v "$tool" >/dev/null 2>&1 || { printf 'Required tool unavailable: %s\n' "$tool" >&2; exit 1; }
+done
+docker compose version >/dev/null
+docker info >/dev/null
+[ -r "$ca_file" ] || { printf 'Trusted CA file unavailable; pass --ca-file.\n' >&2; exit 1; }
+openssl x509 -in "$ca_file" -noout >/dev/null
+[ ! -e secrets/enrollment_token ] || { printf 'Existing enrollment file: use docker compose to restart this deployment.\n' >&2; exit 1; }
+enrollment_token=
+if [ -n "$token_file" ]; then
+ [ -r "$token_file" ] || { printf 'Enrollment file unavailable.\n' >&2; exit 1; }
+ IFS= read -r enrollment_token < "$token_file" || [ -n "$enrollment_token" ]
+else
+ [ -t 0 ] || { printf 'Use an interactive terminal or --enrollment-token-file.\n' >&2; exit 1; }
+ printf 'Paste a fresh one-time enrollment token (input hidden): '
+ terminal_state=$(stty -g)
+ restore_terminal() { stty "$terminal_state" 2>/dev/null || true; }
+ trap restore_terminal EXIT HUP INT TERM
+ stty -echo
+ IFS= read -r enrollment_token
+ stty "$terminal_state"
+ trap - EXIT HUP INT TERM
+ printf '\n'
 fi
-if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v stty >/dev/null 2>&1; then
-	printf 'git, openssl, and stty are required.\n' >&2
-	exit 1
-fi
-if [ ! -t 0 ]; then
-	printf 'Run this installer from an interactive terminal so the enrollment token is not echoed.\n' >&2
-	exit 1
-fi
-
+[ "${#enrollment_token}" -ge 32 ] && [ "${#enrollment_token}" -le 128 ] || { printf 'Enrollment token length is invalid.\n' >&2; exit 1; }
 mkdir -p secrets
 chmod 0700 secrets
-if [ -e secrets/enrollment_token ]; then
-	printf 'secrets/enrollment_token already exists; remove it before installing a fresh enrollment.\n' >&2
-	exit 1
-fi
-umask 077
-printf 'Issue a fresh one-time enrollment token in the HoneyForge operator UI/API.\n'
-printf 'Paste the token here; it is not part of this bundle: '
-terminal_state=$(stty -g)
-restore_terminal() { stty "$terminal_state" 2>/dev/null || true; }
-trap restore_terminal EXIT HUP INT TERM
-stty -echo
-if ! IFS= read -r enrollment_token; then
-	printf '\n' >&2
-	exit 1
-fi
-stty "$terminal_state"
-trap - EXIT HUP INT TERM
-printf '\n'
-if [ -z "$enrollment_token" ]; then
-	printf 'Enrollment token is required.\n' >&2
-	exit 1
-fi
-printf '%%s' "$enrollment_token" > secrets/enrollment_token
+printf '%s' "$enrollment_token" > secrets/enrollment_token
 unset enrollment_token
+cp "$ca_file" secrets/center_ca.pem
 openssl rand -hex 32 > secrets/decoy_agent_ipc_token
 openssl rand -hex 32 > secrets/agent_decoy_ipc_token
-chmod 0444 secrets/enrollment_token secrets/decoy_agent_ipc_token secrets/agent_decoy_ipc_token
+chmod 0444 secrets/enrollment_token secrets/center_ca.pem secrets/decoy_agent_ipc_token secrets/agent_decoy_ipc_token
 
-if [ ! -d source/.git ]; then
-	git clone --quiet --no-checkout %s source
+if [ ! -d source ]; then git clone --quiet --no-checkout @@SOURCE@@ source; fi
+[ "$(git -C source remote get-url origin)" = @@SOURCE@@ ] || { printf 'Unexpected source repository.\n' >&2; exit 1; }
+[ -z "$(git -C source status --porcelain)" ] || { printf 'Runtime source must be clean.\n' >&2; exit 1; }
+git -C source fetch --quiet --depth 1 origin @@SHA@@
+git -C source checkout --quiet --detach @@SHA@@
+[ "$(git -C source rev-parse HEAD)" = @@SHA@@ ]
+if [ -n "$build_ca_file" ]; then
+ [ -r "$build_ca_file" ] || { printf 'Build CA file unavailable.\n' >&2; exit 1; }
+ HF_BUILD_CA_FILE="$build_ca_file" docker compose -f compose.yaml -f compose.build-ca.yaml up --build -d
+else
+ docker compose -f compose.yaml up --build -d
 fi
-git -C source fetch --quiet --depth 1 origin %s
-git -C source checkout --quiet --detach %s
-test "$(git -C source rev-parse HEAD)" = %s
-
-docker compose -f compose.yaml up --build -d
-printf 'Bundle started. Confirm agent registration and applied profile in HoneyForge before treating the trap as online.\n'
-`, shellQuote(sourceRepo), shellQuote(sourceSHA), shellQuote(sourceSHA), shellQuote(sourceSHA))
+printf 'Bundle started. Confirm agent registration and applied profile in HoneyForge.\n'
+`
+	return strings.NewReplacer("@@SOURCE@@", shellQuote(sourceRepo), "@@SHA@@", shellQuote(sourceSHA)).Replace(script)
 }
 
 func shellQuote(value string) string {
@@ -404,7 +419,7 @@ func renderBundleReadme(trapName, trapID, profileID string, revision int, bindin
 		}
 		fmt.Fprintf(&out, "- %s:%d\n", address, binding.HostPort)
 	}
-	out.WriteString("\nRun ./install.sh and enter a newly issued enrollment token when prompted. After the agent registers, queue an apply_profile command for the assigned revision and verify its applied status in HoneyForge. The bootstrap config already uses that revision; the command records the decoy's IPC confirmation in the center. Downloading this archive alone does not deploy or register the trap.\n\nTo stop the services, run `docker compose -f compose.yaml down`. Agent state, queued events, and applied decoy configuration are stored in named volumes. Removing those volumes with `down -v` deletes local state. After the one-time token is consumed, remove `secrets/enrollment_token` from the host and rotate it if a fresh enrollment is needed.\n")
+	out.WriteString("\nFor a private center CA, use ./install.sh --ca-file /absolute/path/to/trusted-ca.pem. Without that option the host system CA bundle is used. For unattended installation use --enrollment-token-file /absolute/path/to/private-file; never put the token in command arguments or logs. If a build proxy uses a private CA, --build-ca-file /absolute/path/to/combined-ca.pem passes it as a transient BuildKit secret without adding it to the image. CA verification remains enabled.\n\nRun ./install.sh and enter a newly issued enrollment token when prompted. After the agent registers, queue an apply_profile command for the assigned revision and verify its applied status in HoneyForge. The bootstrap config already uses that revision; the command records the decoy's IPC confirmation in the center. Downloading this archive alone does not deploy or register the trap.\n\nTo stop the services, run `docker compose -f compose.yaml down`. Agent state, queued events, and applied decoy configuration are stored in named volumes. Removing those volumes with `down -v` deletes local state. After the one-time token is consumed, remove `secrets/enrollment_token` from the host and rotate it if a fresh enrollment is needed.\n")
 	return out.String()
 }
 
@@ -416,7 +431,7 @@ type bundleFile struct {
 func zipBundle(files map[string]bundleFile) ([]byte, error) {
 	var output bytes.Buffer
 	archive := zip.NewWriter(&output)
-	for _, name := range []string{"compose.yaml", "decoy-config.json", "deployment-bindings.json", "manifest.json", "install.sh", "README.txt"} {
+	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "deployment-bindings.json", "manifest.json", "install.sh", "README.txt"} {
 		file, ok := files[name]
 		if !ok {
 			continue

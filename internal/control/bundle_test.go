@@ -16,7 +16,7 @@ func TestRenderTrapBundleSeparatesEnrollmentSecret(t *testing.T) {
 	profileID := "22222222-2222-4222-8222-222222222222"
 	sourceSHA := strings.Repeat("a", 40)
 	bindings := []contracts.DeploymentBinding{{ServiceID: "web", HostPort: 18080}}
-	archive, err := renderTrapBundle(trapID, profileID, 3, "medium archive", profileConfig(), bindings,
+	archive, err := renderTrapBundle(trapID, profileID, 3, "medium archive", "linux-node-02", profileConfig(), bindings,
 		"https://center.example.org:9443", defaultBundleSourceRepository, sourceSHA)
 	if err != nil {
 		t.Fatalf("render bundle: %v", err)
@@ -41,10 +41,14 @@ func TestRenderTrapBundleSeparatesEnrollmentSecret(t *testing.T) {
 			t.Fatalf("install.sh mode = %o, want 755", file.Mode().Perm())
 		}
 	}
-	for _, name := range []string{"compose.yaml", "decoy-config.json", "manifest.json", "install.sh", "README.txt"} {
+	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "manifest.json", "install.sh", "README.txt"} {
 		if _, ok := files[name]; !ok {
 			t.Errorf("bundle is missing %s", name)
 		}
+	}
+	var manifest bundleManifest
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil || manifest.DeploymentNode != "linux-node-02" {
+		t.Fatalf("bundle target node not preserved: node=%q err=%v", manifest.DeploymentNode, err)
 	}
 	if bytes.Contains(files["install.sh"], []byte("one-time-secret-value")) || bytes.Contains(archive, []byte("enrollment_token=")) {
 		t.Fatal("bundle contains enrollment-token material")
@@ -68,11 +72,11 @@ func TestRenderTrapBundleSeparatesEnrollmentSecret(t *testing.T) {
 
 func TestBundleRejectsIncompleteBindingsAndUnpinnedSource(t *testing.T) {
 	config := profileConfig()
-	if _, err := renderTrapBundle("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", 1, "trap", config, nil,
+	if _, err := renderTrapBundle("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", 1, "trap", "linux-node", config, nil,
 		"https://center.example.org:9443", defaultBundleSourceRepository, strings.Repeat("a", 40)); err == nil {
 		t.Fatal("bundle accepted a profile without host bindings")
 	}
-	if _, err := renderTrapBundle("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", 1, "trap", config,
+	if _, err := renderTrapBundle("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", 1, "trap", "linux-node", config,
 		[]contracts.DeploymentBinding{{ServiceID: "web", HostPort: 18080}}, "https://center.example.org:9443", defaultBundleSourceRepository, "dev"); err == nil {
 		t.Fatal("bundle accepted an unpinned source revision")
 	}

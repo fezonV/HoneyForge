@@ -15,7 +15,7 @@ export interface AuthSession {
 }
 
 export type InteractionLevel = 'low' | 'medium' | 'high';
-export type TrapStatus = 'online' | 'offline' | 'last_seen' | 'unregistered' | 'degraded';
+export type TrapStatus = 'online' | 'offline' | 'last_seen' | 'unregistered' | 'registration_failed' | 'degraded';
 
 export interface ServiceConfig {
   id?: string;
@@ -115,7 +115,19 @@ export interface DeploymentBinding {
   bind_address?: string;
 }
 
+export interface RegistrationAttempt {
+  id: string;
+  trap_id: string;
+  outcome: 'registered' | 'rejected';
+  reason: 'registered' | 'invalid_token' | 'expired_token' | 'inactive_token' | 'already_enrolled';
+  created_at: string;
+}
+
 export interface Trap {
+  deployment_node?: string;
+  registration_status?: 'pending' | 'rejected' | 'registered';
+  agent_id?: string;
+  last_registration_attempt?: RegistrationAttempt;
   id: string;
   name: string;
   status: TrapStatus;
