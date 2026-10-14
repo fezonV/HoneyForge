@@ -57,10 +57,11 @@ func main() {
 		log.Fatal("agent is already enrolled; do not pass enrollment credentials again")
 	}
 
+	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
 	if err = syncConfig(ctx, client, state, *statePath); err != nil {
 		log.Printf("initial configuration sync failed: %v", err)
 	}
-	if err = sendHeartbeat(ctx, client, state); err != nil {
+	if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
 		log.Printf("initial heartbeat failed: %v", err)
 	}
 	syncTicker := time.NewTicker(2 * time.Second)
@@ -72,7 +73,6 @@ func main() {
 	defer deliveryTicker.Stop()
 	defer commandTicker.Stop()
 	var metrics agent.DeliveryMetrics
-	var adapter agent.DecoyAdapter = agent.RejectingAdapter{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,7 +86,7 @@ func main() {
 			syncTicker.Reset(time.Duration(state.Config.Config.Channel.SyncSeconds) * time.Second)
 			heartbeatTicker.Reset(time.Duration(state.Config.Config.Channel.HeartbeatSeconds) * time.Second)
 		case <-heartbeatTicker.C:
-			if err = sendHeartbeat(ctx, client, state); err != nil {
+			if err = sendHeartbeat(ctx, client, state, adapter); err != nil {
 				log.Printf("heartbeat failed: %v", err)
 			}
 		case <-deliveryTicker.C:
@@ -116,10 +116,26 @@ func syncConfig(ctx context.Context, client *agent.Client, state *agent.State, s
 	return agent.SaveState(statePath, state)
 }
 
-func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State) error {
+func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return client.Heartbeat(requestCtx, state, "unknown")
+	return client.Heartbeat(requestCtx, state, currentServiceState(requestCtx, adapter))
+}
+
+func currentServiceState(ctx context.Context, adapter agent.DecoyAdapter) string {
+	if adapter == nil {
+		return "unknown"
+	}
+	serviceState, err := adapter.ServiceState(ctx)
+	if err != nil {
+		return "error"
+	}
+	switch serviceState {
+	case "unknown", "running", "stopped", "degraded", "error":
+		return serviceState
+	default:
+		return "error"
+	}
 }
 
 func defaultStatePath() string {

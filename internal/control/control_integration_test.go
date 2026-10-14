@@ -366,6 +366,37 @@ func TestControlPostgresFoundation(t *testing.T) {
 	if eventsRes.Code != 422 {
 		t.Fatalf("invalid SQL-shaped event accepted=%d %s", eventsRes.Code, eventsRes.Body.String())
 	}
+	var agentID string
+	if err := db.QueryRow(ctx, `SELECT id::text FROM agents WHERE trap_id=$1`, nt.ID).Scan(&agentID); err != nil {
+		t.Fatal("read enrolled agent ID", err)
+	}
+	validEventBody := fmt.Sprintf(`{"events":[{"schema_version":"1.0","event_id":"44444444-4444-4444-8444-444444444444","trap_id":%q,"agent_id":%q,"service_id":"web","session_id":null,"profile_id":null,"applied_revision":null,"event_type":"http.request","timestamp":"2026-10-13T00:00:00Z","destination_port":80,"protocol":"http","payload":{"path":"/","method":"GET"}}]}`, nt.ID, agentID)
+	for attempt := 0; attempt < 2; attempt++ {
+		validReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(validEventBody))
+		validReq.Header.Set("Authorization", "Bearer "+agentToken)
+		validReq.Header.Set("Content-Type", "application/json")
+		validRes := httptest.NewRecorder()
+		h.ServeHTTP(validRes, validReq)
+		if validRes.Code != 200 {
+			t.Fatalf("valid event attempt %d=%d %s", attempt, validRes.Code, validRes.Body.String())
+		}
+		wantID := `"accepted_ids":["44444444-4444-4444-8444-444444444444"]`
+		if attempt == 1 {
+			wantID = `"duplicate_ids":["44444444-4444-4444-8444-444444444444"]`
+		}
+		if !strings.Contains(validRes.Body.String(), wantID) {
+			t.Fatalf("event attempt %d response=%s, want %s", attempt, validRes.Body.String(), wantID)
+		}
+	}
+	conflictingEventBody := strings.Replace(validEventBody, `"timestamp":"2026-10-13T00:00:00Z"`, `"timestamp":"2026-10-13T00:00:01Z"`, 1)
+	conflictReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/events", strings.NewReader(conflictingEventBody))
+	conflictReq.Header.Set("Authorization", "Bearer "+agentToken)
+	conflictReq.Header.Set("Content-Type", "application/json")
+	conflictRes := httptest.NewRecorder()
+	h.ServeHTTP(conflictRes, conflictReq)
+	if conflictRes.Code != 409 {
+		t.Fatalf("event ID reuse with different content=%d %s", conflictRes.Code, conflictRes.Body.String())
+	}
 	if _, err := db.Exec(ctx, `UPDATE agents SET revoked_at=now() WHERE trap_id=$1`, nt.ID); err != nil {
 		t.Fatal("revoke heartbeat fixture", err)
 	}
@@ -402,6 +433,35 @@ func TestControlPostgresFoundation(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(reqCommand.Body.Bytes(), &command)
+	fetchAgentCommands := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/agent/v1/traps/"+nt.ID+"/commands", nil)
+		req.Header.Set("Authorization", "Bearer "+agentToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		return res
+	}
+	firstDelivery := fetchAgentCommands()
+	if firstDelivery.Code != 200 || !strings.Contains(firstDelivery.Body.String(), `"status":"delivered"`) || !strings.Contains(firstDelivery.Body.String(), command.ID) {
+		t.Fatalf("first agent command delivery=%d %s", firstDelivery.Code, firstDelivery.Body.String())
+	}
+	if repeatedDelivery := fetchAgentCommands(); repeatedDelivery.Code != 200 || strings.Contains(repeatedDelivery.Body.String(), command.ID) {
+		t.Fatalf("command delivered again before lease expired=%d %s", repeatedDelivery.Code, repeatedDelivery.Body.String())
+	}
+	if _, err := db.Exec(ctx, `UPDATE commands SET delivered_at=now()-interval '31 seconds',expires_at=now()-interval '1 second' WHERE id=$1`, command.ID); err != nil {
+		t.Fatal("expire delivered command fixture", err)
+	}
+	expiredResultReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/commands/"+command.ID, strings.NewReader(`{"status":"applied"}`))
+	expiredResultReq.Header.Set("Authorization", "Bearer "+agentToken)
+	expiredResultReq.Header.Set("Content-Type", "application/json")
+	expiredResult := httptest.NewRecorder()
+	h.ServeHTTP(expiredResult, expiredResultReq)
+	if expiredResult.Code != 409 {
+		t.Fatalf("expired command result=%d %s", expiredResult.Code, expiredResult.Body.String())
+	}
+	var commandStatus string
+	if err := db.QueryRow(ctx, `SELECT status FROM commands WHERE id=$1`, command.ID).Scan(&commandStatus); err != nil || commandStatus != "expired" {
+		t.Fatalf("expired command status=%q err=%v", commandStatus, err)
+	}
 	_, err := db.Exec(ctx, `UPDATE commands SET expires_at=now()-interval '1 second' WHERE id=$1`, command.ID)
 	if err != nil {
 		t.Fatal("expire command fixture")
@@ -413,6 +473,32 @@ func TestControlPostgresFoundation(t *testing.T) {
 	filteredCommands := op.request("GET", "/api/v1/traps/"+nt.ID+"/commands?status=expired", "", false, true)
 	if filteredCommands.Code != 200 || !strings.Contains(filteredCommands.Body.String(), command.ID) {
 		t.Fatalf("command status filter=%d %s", filteredCommands.Code, filteredCommands.Body.String())
+	}
+	failedQueue := op.request("POST", "/api/v1/traps/"+nt.ID+"/commands", fmt.Sprintf(`{"type":"start","expected_profile_id":%q,"expected_revision":1,"ttl_seconds":60}`, np.Profile.ID), true, true)
+	if failedQueue.Code != 201 {
+		t.Fatalf("failed-command fixture=%d %s", failedQueue.Code, failedQueue.Body.String())
+	}
+	var failedCommand struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(failedQueue.Body.Bytes(), &failedCommand); err != nil {
+		t.Fatal("decode failed-command fixture", err)
+	}
+	failedDelivery := fetchAgentCommands()
+	if failedDelivery.Code != 200 || !strings.Contains(failedDelivery.Body.String(), failedCommand.ID) {
+		t.Fatalf("failed command delivery=%d %s", failedDelivery.Code, failedDelivery.Body.String())
+	}
+	failedResultReq := httptest.NewRequest("POST", "/agent/v1/traps/"+nt.ID+"/commands/"+failedCommand.ID, strings.NewReader(`{"status":"failed","error":"adapter unavailable"}`))
+	failedResultReq.Header.Set("Authorization", "Bearer "+agentToken)
+	failedResultReq.Header.Set("Content-Type", "application/json")
+	failedResult := httptest.NewRecorder()
+	h.ServeHTTP(failedResult, failedResultReq)
+	if failedResult.Code != 200 {
+		t.Fatalf("failed command result=%d %s", failedResult.Code, failedResult.Body.String())
+	}
+	failedList := op.request("GET", "/api/v1/traps/"+nt.ID+"/commands?status=failed", "", false, true)
+	if failedList.Code != 200 || !strings.Contains(failedList.Body.String(), `"error":"adapter unavailable"`) {
+		t.Fatalf("failed command details=%d %s", failedList.Code, failedList.Body.String())
 	}
 	_, err = db.Exec(ctx, `UPDATE traps SET last_seen=now()-interval '21 seconds',agent_status='online' WHERE id=$1`, nt.ID)
 	if err != nil {

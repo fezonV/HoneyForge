@@ -424,7 +424,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/UUID' }]
       responses:
         '200':
-          description: Commands atomically marked delivered
+          description: Queued commands and commands whose 30-second delivery lease elapsed are returned again until reported or expired.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageCommand' }
@@ -842,6 +842,7 @@ components:
         target_profile_id: { type: string, format: uuid }
         target_revision: { type: integer }
         status: { type: string, enum: [queued, delivered, applied, failed, expired] }
+        error: { type: string, maxLength: 500 }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
     PageCommand:
