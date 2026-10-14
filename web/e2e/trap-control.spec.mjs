@@ -47,7 +47,7 @@ async function setup(page, role = 'operator') {
         const body = request.postDataJSON(); state.posts.push({ path, body });
         if (state.sessionExpired) return route.fulfill({ status: 401, json: { error: { code: 'unauthorized', message: 'Сессия истекла' } } });
         const command = { id: commandId, trap_id: trapId, type: body.type, target_profile_id: profileId,
-          target_revision: body.expected_revision, status: 'queued', created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 300000).toISOString() };
+          target_revision: body.expected_revision, status: 'queued', created_at: state.commandTime || new Date().toISOString(), expires_at: new Date(Date.now() + 300000).toISOString() };
         state.commands.push(command);
         if (state.timeout) return route.abort('failed');
         json = command;
@@ -88,9 +88,10 @@ test('stop requires confirmation, is scoped to A, and success waits for applied'
   await page.screenshot({ path: 'test-results/fe2-control.png', fullPage: true });
 });
 
-test('lost command response is reconciled without a duplicate POST, including reload', async ({ page }) => {
+test('lost command response is reconciled without a duplicate POST despite clock skew and reload', async ({ page }) => {
   const state = await setup(page);
   state.timeout = true;
+  state.commandTime = new Date(Date.now() - 60000).toISOString();
   await panel(page).getByRole('button', { name: 'Остановить', exact: true }).click();
   await page.getByRole('button', { name: 'Подтвердить остановить' }).click();
   await expect(panel(page)).toContainText('Результат отправки неизвестен');
@@ -168,4 +169,29 @@ test('incompatible service bindings block assignment; stale rotation fails witho
   expect(state.versions).toHaveLength(2);
   expect(state.trap.desired_revision).toBe(1);
   expect(state.trap.applied_revision).toBe(1);
+});
+
+test('a definite rejection after leaving the card does not leave a permanent pending command', async ({ page }) => {
+  const state = await setup(page);
+  let release;
+  const responseGate = new Promise((done) => { release = done; });
+  let started;
+  const requestStarted = new Promise((done) => { started = done; });
+  await page.route(`**/api/v1/traps/${trapId}/commands`, async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    state.posts.push({ body: route.request().postDataJSON() });
+    started();
+    await responseGate;
+    await route.fulfill({ status: 409, json: { error: { code: 'profile_conflict', message: 'Назначение изменилось' } } });
+  });
+  await panel(page).getByRole('button', { name: 'Остановить', exact: true }).click();
+  await page.getByRole('button', { name: 'Подтвердить остановить' }).click();
+  await requestStarted;
+  await page.evaluate(() => { location.hash = 'profiles'; });
+  await expect(panel(page)).toHaveCount(0);
+  release();
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.startsWith('hf_command_pending:')).length)).toBe(0);
+  await page.evaluate((id) => { location.hash = `traps/${id}`; }, trapId);
+  await expect(panel(page).getByRole('button', { name: 'Остановить', exact: true })).toBeEnabled();
+  expect(state.posts).toHaveLength(1);
 });

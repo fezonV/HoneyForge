@@ -82,9 +82,11 @@ export function TrapControlPanel({ trap, profiles, commands, updatedAt, fresh, o
 
   const chosen = versions.find((item) => item.revision === revision);
   const inflight = commands.some(active);
+  // Exclude the known command IDs, then require manual reconciliation. Browser
+  // and server clocks need not agree, so local timestamps cannot exclude IDs.
   const candidates = pending && !pending.commandId ? commands.filter((item) =>
     !pending.before.includes(item.id) && item.type === pending.type && item.target_profile_id === pending.profileId &&
-    item.target_revision === pending.revision && Date.parse(item.created_at) >= pending.startedAt - 5000) : [];
+    item.target_revision === pending.revision) : [];
   const locked = busy || !fresh || inflight || !!pending || assignmentUnknown;
   const operator = role === 'operator' && !isDevModeActive();
   const bindingIds = new Set(trap.deployment_bindings?.map((binding) => binding.service_id));
@@ -112,9 +114,12 @@ export function TrapControlPanel({ trap, profiles, commands, updatedAt, fresh, o
       sessionStorage.setItem(storageKey, JSON.stringify({ ...operation, commandId: result.command_id }));
       if (alive.current) { setPending({ ...operation, commandId: result.command_id }); setNotice(`Команда ${result.command_id} принята: ${result.status}. Выполнение ещё не подтверждено.`); setConfirm(null); }
     } catch (cause) {
+      // A definite rejection must clear persisted metadata even after the card
+      // unmounts (navigation/session expiry). Unknown outcomes remain blocked.
+      if (!submitted || !uncertain(cause)) sessionStorage.removeItem(storageKey);
       if (alive.current) {
         setError(submitted && uncertain(cause) ? 'Результат отправки неизвестен. Запрос не повторяется. Перечитываем историю; новая команда заблокирована до выяснения результата.' : message(cause));
-        if (!submitted || !uncertain(cause)) { setPending(null); sessionStorage.removeItem(storageKey); }
+        if (!submitted || !uncertain(cause)) setPending(null);
         setConfirm(null);
       }
     } finally { sending.current = false; if (alive.current) { setBusy(false); onChanged(); } }
@@ -186,7 +191,7 @@ export function TrapControlPanel({ trap, profiles, commands, updatedAt, fresh, o
     {notice && <p role="status" className="text-slate-700 whitespace-pre-wrap">{notice}</p>}
     {error && <p role="alert" className="text-rose-700">{error}</p>}
     {pending && <p className="bg-amber-50 p-3 rounded text-sm">Ожидаем результат {pending.commandId || 'отправки команды'}. Повторный POST заблокирован. <Button size="sm" variant="outline" onClick={onChanged}>Проверить статус</Button></p>}
-    {operator && candidates.length > 0 && <div className="text-sm space-y-2"><p>Сервер не возвращает ключ запроса для сопоставления потерянного ответа. Проверьте ID, тип и время в истории, прежде чем связать отправку с найденной командой.</p>{candidates.map((item) => <Button key={item.id} size="sm" variant="outline" onClick={() => { if (pending) setPending({ ...pending, commandId: item.id }); }}>Связать с командой {item.id}</Button>)}</div>}
+    {operator && candidates.length > 0 && <div className="text-sm space-y-2"><p>Ответ на отправку не получен. Проверьте ID, тип и время в истории, прежде чем связать отправку с найденной командой.</p>{candidates.map((item) => <Button key={item.id} size="sm" variant="outline" onClick={() => { if (pending) setPending({ ...pending, commandId: item.id }); }}>Связать с командой {item.id}</Button>)}</div>}
     {operator && <>
       {(inflight || !fresh) && <p className="text-amber-800 text-sm">Управление заблокировано до получения актуального состояния и завершения активной команды.</p>}
       <div className="flex flex-wrap gap-2">{(['start', 'stop', 'apply_profile'] as const).map((action) => <Button key={action} variant="outline" size="sm" disabled={locked || !trap.desired_profile_id} onClick={() => { setError(''); setConfirm(action); }}>{labels[action]}</Button>)}</div>

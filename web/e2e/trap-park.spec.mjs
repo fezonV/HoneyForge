@@ -294,6 +294,7 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await rotatedPage.getByLabel('Пароль', { exact: true }).fill('synthetic-only');
   await rotatedPage.getByRole('button', { name: 'Войти' }).click();
   await expect(rotatedPage.getByLabel('Пароль', { exact: true })).toBeVisible();
+  await rotatedPage.getByLabel('Имя пользователя').fill('reader');
   await rotatedPage.getByLabel('Пароль', { exact: true }).fill('synthetic-rotated-only');
   await rotatedPage.getByRole('button', { name: 'Войти' }).click();
   await expect(rotatedPage.getByRole('link', { name: 'reports/summary.txt', exact: true })).toBeVisible();
@@ -305,6 +306,15 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   expect((await getTrap(page, two.trap.id)).agent_status).toBe('online');
   await expect(card).toContainText('Сервис остановлен');
   expect((await fetch(await visitorURL(low.config.services[0].port))).status).toBe(200);
+  await controls.getByRole('button', { name: 'Запустить', exact: true }).click();
+  await page.getByRole('button', { name: 'Подтвердить запустить' }).click();
+  await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('running');
+  await expect(card).toContainText('Сервис работает');
+  expect((await fetch(publicURL)).status).toBe(200);
+  expect((await getTrap(page, one.trap.id)).agent_status).toBe('online');
+  await controls.getByRole('button', { name: 'Остановить', exact: true }).click();
+  await page.getByRole('button', { name: 'Подтвердить остановить' }).click();
+  await expect.poll(async () => (await getTrap(page, two.trap.id)).service_status).toBe('stopped');
   await page.reload();
   await expect(card).toContainText('Сервис остановлен');
   await stop(mediumRuntime.agent);
