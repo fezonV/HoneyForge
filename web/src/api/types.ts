@@ -129,7 +129,10 @@ export interface Trap {
   last_seen_at?: string;
   agent_status?: string;
   service_status?: string;
-  enrollment_token?: string; // Visible only to operator upon generation
+  desired_profile_id?: string | null;
+  desired_revision?: number | null;
+  applied_profile_id?: string | null;
+  created_at?: string;
   attacks_count_24h: number;
   deployment_bindings?: DeploymentBinding[];
 }

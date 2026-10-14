@@ -19,7 +19,7 @@ const MainLayout: React.FC = () => {
   // URL hash sync for browser back/forward and direct tab links
   useEffect(() => {
     const handleHashChange = () => {
-      const hash = window.location.hash.replace('#', '') as NavTab;
+      const hash = window.location.hash.replace('#', '').split(/[/?]/)[0] as NavTab;
       if (['overview', 'profiles', 'traps', 'events', 'audit'].includes(hash)) {
         setCurrentTab(hash);
       }

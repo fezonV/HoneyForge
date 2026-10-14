@@ -163,6 +163,30 @@ const mockTraps = [...FIXTURE_TRAPS];
 const mockEvents = [...FIXTURE_ATTACK_EVENTS];
 const mockAudit = [...FIXTURE_AUDIT_LOGS];
 let mockCurrentUser: User | null = FIXTURE_OPERATOR;
+const profileRevisionCache = new Map<string, ProfileRevision>();
+
+function mapTrap(t: any): Trap {
+  const seen = t.last_seen || undefined;
+  const agentStatus = t.agent_status === 'online' ? 'online' : 'offline';
+  return {
+    id: t.id, name: t.name,
+    status: !seen ? 'unregistered' : agentStatus,
+    level: 'low', // Enriched from the assigned profile by the screen.
+    desired_profile_id: t.desired_profile_id,
+    desired_revision: t.desired_revision,
+    applied_profile_id: t.applied_profile_id,
+    applied_revision: t.applied_revision,
+    profile_id: t.desired_profile_id || undefined,
+    profile_revision: t.desired_revision || undefined,
+    ip_address: t.deployment_bindings?.[0]?.bind_address || '—',
+    last_seen_at: seen,
+    agent_status: agentStatus,
+    service_status: t.service_status || 'unknown',
+    attacks_count_24h: 0,
+    deployment_bindings: t.deployment_bindings || [],
+    created_at: t.created_at,
+  };
+}
 
 export const api = {
   auth: {
@@ -305,31 +329,57 @@ export const api = {
   },
 
   profiles: {
+    async revisions(id: string): Promise<ProfileRevision[]> {
+      if (isDevModeActive()) {
+        const profile = mockProfiles.find((p) => p.id === id);
+        return profile ? [{ profile_id: id, revision: profile.revision, config: profile.config || {
+          template_id: profile.level === 'medium' ? 'medium-http' : 'low-http', level: profile.level,
+          services: profile.services, visible_texts: { title: profile.name, login_prompt: '', success: '', failure: '' },
+          synthetic_credentials: [], fake_fs: [], logging: { categories: [] },
+          channel: { tls_required: true, heartbeat_seconds: 15, sync_seconds: 30 },
+        }, created_at: profile.created_at, created_by: '', sensitive_redacted: true }] : [];
+      }
+      const revisions: ProfileRevision[] = [];
+      let cursor = '';
+      do {
+        const params = new URLSearchParams({ limit: '100' });
+        if (cursor) params.set('cursor', cursor);
+        const page = await request<Page<ProfileRevision>>(`/api/v1/profiles/${encodeURIComponent(id)}/revisions?${params}`);
+        revisions.push(...(page.items || []));
+        cursor = page.next_cursor || '';
+      } while (cursor);
+      return revisions;
+    },
     async list(): Promise<Profile[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));
         return [...mockProfiles];
       }
 
-      const res = await request<Page<any>>('/api/v1/profiles');
-      const items = res.items || [];
+      const items: any[] = [];
+      let cursor = '';
+      do {
+        const params = new URLSearchParams({ limit: '100' });
+        if (cursor) params.set('cursor', cursor);
+        const page = await request<Page<any>>(`/api/v1/profiles?${params}`);
+        items.push(...(page.items || []));
+        cursor = page.next_cursor || '';
+      } while (cursor);
 
-      // Map backend profile items to UI profiles
-      return items.map((p: any) => ({
+      return Promise.all(items.map(async (p: any) => {
+        const key = `${p.id}:${p.current_revision}`;
+        let current = profileRevisionCache.get(key);
+        if (!current) {
+          current = await request<ProfileRevision>(`/api/v1/profiles/${encodeURIComponent(p.id)}/revisions/${p.current_revision}`);
+          profileRevisionCache.set(key, current);
+        }
+        return {
         id: p.id,
         name: p.name,
         description: p.description || '',
-        level: (p.level || (p.name.toLowerCase().includes('medium') ? 'medium' : 'low')) as any,
+        level: current.config.level as InteractionLevel,
         revision: p.current_revision || 1,
-        services: [
-          {
-            id: 'svc-1',
-            name: `${p.name} Service`,
-            port: 80,
-            protocol: 'http',
-            banner: 'HoneyForge Decoy Service v1.0',
-          },
-        ],
+        services: current.config.services,
         masking: {
           jitter_enabled: true,
           min_jitter_sec: 2,
@@ -340,6 +390,7 @@ export const api = {
         created_at: p.created_at,
         updated_at: p.updated_at,
         traps_count: 0,
+      };
       }));
     },
 
@@ -490,36 +541,19 @@ export const api = {
     async list(): Promise<Trap[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));
-        if (mockCurrentUser?.role === 'viewer') {
-          return mockTraps.map(({ enrollment_token: _token, ...rest }) => rest as Trap);
-        }
         return [...mockTraps];
       }
 
-      const res = await request<Page<any>>('/api/v1/traps');
-      const items = res.items || [];
-
-      return items.map((t: any) => {
-        let status: 'online' | 'offline' | 'last_seen' = 'last_seen';
-        if (t.agent_status === 'online') status = 'online';
-        else if (t.agent_status === 'offline') status = 'offline';
-
-        return {
-          id: t.id,
-          name: t.name,
-          status,
-          level: (t.desired_revision === 2 ? 'medium' : 'low') as any,
-          profile_id: t.desired_profile_id || undefined,
-          profile_name: t.desired_profile_id ? `Профиль #${t.desired_profile_id.substring(0, 8)}` : 'Не назначен',
-          profile_revision: t.desired_revision || 1,
-          applied_revision: t.applied_revision || 1,
-          ip_address: t.deployment_bindings?.[0]?.bind_address || '192.168.10.15',
-          location: 'DMZ Core',
-          last_seen_at: t.last_seen || t.created_at,
-          attacks_count_24h: 120,
-          deployment_bindings: t.deployment_bindings,
-        };
-      });
+      const items: any[] = [];
+      let cursor = '';
+      do {
+        const params = new URLSearchParams({ limit: '100' });
+        if (cursor) params.set('cursor', cursor);
+        const page = await request<Page<any>>(`/api/v1/traps?${params}`);
+        items.push(...(page.items || []));
+        cursor = page.next_cursor || '';
+      } while (cursor);
+      return items.map(mapTrap);
     },
 
     async create(data: { name: string; deployment_bindings?: DeploymentBinding[] }): Promise<Trap> {
@@ -528,12 +562,13 @@ export const api = {
         const newTrap: Trap = {
           id: `c3d4e5f6-a1b2-4c3d-ae4f-${Date.now().toString(16).padStart(12, '0')}`.slice(0, 36),
           name: data.name,
-          status: 'offline',
+          status: 'unregistered',
           level: 'low',
           profile_name: 'Не назначен',
           ip_address: data.deployment_bindings?.[0]?.bind_address || '127.0.0.1',
           location: 'DMZ Core',
-          last_seen_at: new Date().toISOString(),
+          agent_status: 'offline',
+          service_status: 'unknown',
           attacks_count_24h: 0,
           deployment_bindings: data.deployment_bindings || [],
         };
@@ -549,21 +584,7 @@ export const api = {
         }),
       });
 
-      return {
-        id: res.id,
-        name: res.name,
-        status: (res.agent_status === 'online' ? 'online' : 'offline') as any,
-        level: 'low',
-        profile_id: res.desired_profile_id || undefined,
-        profile_name: res.desired_profile_id ? `Профиль #${res.desired_profile_id.substring(0, 8)}` : 'Не назначен',
-        profile_revision: res.desired_revision || 1,
-        applied_revision: res.applied_revision || 1,
-        ip_address: res.deployment_bindings?.[0]?.bind_address || '127.0.0.1',
-        location: 'DMZ Core',
-        last_seen_at: res.last_seen || res.created_at,
-        attacks_count_24h: 0,
-        deployment_bindings: res.deployment_bindings || [],
-      };
+      return mapTrap(res);
     },
 
     async assignProfile(trapId: string, profileId: string, revision: number = 1): Promise<Trap> {
@@ -575,6 +596,8 @@ export const api = {
           trap.profile_id = profileId;
           trap.profile_name = profile?.name || 'Профиль';
           trap.profile_revision = revision;
+          trap.desired_profile_id = profileId;
+          trap.desired_revision = revision;
           trap.level = profile?.level || 'low';
         }
         return trap!;
@@ -585,46 +608,25 @@ export const api = {
         body: JSON.stringify({ profile_id: profileId, revision }),
       });
 
-      return {
-        id: res.id,
-        name: res.name,
-        status: (res.agent_status === 'online' ? 'online' : 'offline') as any,
-        level: (res.desired_revision === 2 ? 'medium' : 'low') as any,
-        profile_id: res.desired_profile_id || undefined,
-        profile_name: res.desired_profile_id ? `Профиль #${res.desired_profile_id.substring(0, 8)}` : 'Не назначен',
-        profile_revision: res.desired_revision || 1,
-        applied_revision: res.applied_revision || 1,
-        ip_address: res.deployment_bindings?.[0]?.bind_address || '127.0.0.1',
-        location: 'DMZ Core',
-        last_seen_at: res.last_seen || res.created_at,
-        attacks_count_24h: 0,
-        deployment_bindings: res.deployment_bindings || [],
-      };
+      return mapTrap(res);
     },
 
-    async generateToken(trapId: string): Promise<{ token: string; expires_at: string; install_command?: string }> {
+    async generateToken(trapId: string): Promise<{ token: string; expires_in_seconds: number }> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 300));
         const token = `hf_enr_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
-        const trap = mockTraps.find((t) => t.id === trapId);
-        if (trap) trap.enrollment_token = token;
         return {
           token,
-          expires_at: new Date(Date.now() + 3600000).toISOString(),
-          install_command: `curl -sSL http://127.0.0.1:8081/agent/install.sh | sudo bash -s -- --token=${token}`,
+          expires_in_seconds: 600,
         };
       }
 
-      const res = await request<{ token: string; expires_at: string; install_command?: string }>(
+      const res = await request<{ token: string; expires_in_seconds: number }>(
         `/api/v1/traps/${encodeURIComponent(trapId)}/enrollment-token`,
         { method: 'POST' }
       );
 
-      return {
-        token: res.token,
-        expires_at: res.expires_at,
-        install_command: res.install_command || `curl -sSL http://127.0.0.1:8081/agent/install.sh | sudo bash -s -- --token=${res.token}`,
-      };
+      return res;
     },
 
     async sendCommand(
@@ -667,17 +669,12 @@ export const api = {
         return list.slice(0, params.limit || 50);
       }
 
-      // Try hitting backend if event service is available, otherwise provide rich live feed from fixtures
-      try {
-        const query = new URLSearchParams();
-        if (params.limit) query.set('limit', String(params.limit));
-        if (params.trap_id) query.set('trap_id', params.trap_id);
-        if (params.severity) query.set('severity', params.severity);
-        return await request<AttackEvent[]>(`/api/v1/events?${query.toString()}`);
-      } catch {
-        // Events are scheduled for BE-03/BE-04; fall back to contract fixtures
-        return mockEvents;
-      }
+      const query = new URLSearchParams();
+      if (params.limit) query.set('limit', String(params.limit));
+      if (params.trap_id) query.set('trap_id', params.trap_id);
+      if (params.severity) query.set('severity', params.severity);
+      const page = await request<Page<AttackEvent>>(`/api/v1/events?${query.toString()}`);
+      return page.items || [];
     },
   },
 

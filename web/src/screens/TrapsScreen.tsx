@@ -1,462 +1,198 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Key,
-  Play,
-  Square,
-  RefreshCw,
-  Copy,
-  Check,
-  Lock,
-  Terminal,
-  Plus,
-} from 'lucide-react';
-import { Trap, Profile } from '../api/types';
-import { api } from '../api/client';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Copy, Plus, RefreshCw } from 'lucide-react';
+import { DeploymentBinding, Profile, ProfileRevision, Trap } from '../api/types';
+import { api, isDevModeActive } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
-import { StatusBadge, LevelBadge } from '../components/common/Badge';
+import { LevelBadge, StatusBadge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
-import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/StateViews';
+import { EmptyState, ErrorState, LoadingSkeleton } from '../components/common/StateViews';
+
+const dateText = (value?: string) => value ? new Date(value).toLocaleString('ru-RU', { timeZoneName: 'short' }) : 'Никогда';
+const serviceText = (value?: string) => ({ running: 'Работает', stopped: 'Остановлен', degraded: 'Работает с ошибками', error: 'Ошибка', unknown: 'Неизвестно' }[value || 'unknown'] || 'Неизвестно');
+
+function progress(trap: Trap): string {
+  if (!trap.last_seen_at) return 'Ожидает регистрации';
+  if (trap.agent_status !== 'online') return 'Агент offline';
+  if (!trap.applied_revision || trap.applied_profile_id !== trap.desired_profile_id || trap.applied_revision !== trap.desired_revision) return 'Агент зарегистрирован · ожидает применения';
+  if (trap.service_status === 'running') return 'Сервис работает';
+  if (trap.service_status === 'stopped') return 'Сервис остановлен';
+  if (trap.service_status === 'error') return 'Ошибка сервиса';
+  return 'Конфигурация применена';
+}
 
 export const TrapsScreen: React.FC = () => {
   const { role } = useAuth();
   const { notify } = useNotification();
   const [traps, setTraps] = useState<Trap[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<number | null>(null);
+  const [profileId, setProfileId] = useState('');
+  const [revision, setRevision] = useState(0);
+  const [requestedRevision, setRequestedRevision] = useState<number | null>(null);
+  const [revisions, setRevisions] = useState<ProfileRevision[]>([]);
+  const [revisionError, setRevisionError] = useState('');
+  const [name, setName] = useState('');
+  const [node, setNode] = useState('');
+  const [bindings, setBindings] = useState<DeploymentBinding[]>([]);
+  const [created, setCreated] = useState<Trap | null>(null);
+  const [submitError, setSubmitError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [token, setToken] = useState<{ trapId: string; value: string; expiresAt: number } | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [levelFilter, setLevelFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [profileFilter, setProfileFilter] = useState('all');
+  const [tick, setTick] = useState(Date.now());
 
-  // Trap Registration Modal
-  const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [newTrapName, setNewTrapName] = useState<string>('');
-  const [newTrapPort, setNewTrapPort] = useState<number>(8080);
-  const [newTrapBindIp, setNewTrapBindIp] = useState<string>('0.0.0.0');
-  const [newTrapProfileId, setNewTrapProfileId] = useState<string>('');
+  useEffect(() => {
+    if (role !== 'operator') { setToken(null); setStep(null); }
+  }, [role]);
 
-  // Enrollment Token Modal
-  const [activeTokenModal, setActiveTokenModal] = useState<{
-    trap: Trap;
-    token: string;
-    expiresAt: string;
-    installCommand?: string;
-  } | null>(null);
-  const [isCopied, setIsCopied] = useState<boolean>(false);
-
-  const fetchTraps = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  const refresh = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     try {
-      const [trapsData, profilesData] = await Promise.all([
-        api.traps.list(),
-        api.profiles.list().catch(() => []),
-      ]);
-      setTraps(trapsData);
-      setProfiles(profilesData);
-    } catch (err: any) {
-      setError(err.message || 'Ошибка загрузки реестра ловушек');
+      const [items, nextProfiles] = await Promise.all([api.traps.list(), api.profiles.list()]);
+      const byId = new Map(nextProfiles.map((p) => [p.id, p]));
+      setTraps(items.map((trap) => {
+        const profile = byId.get(trap.desired_profile_id || trap.profile_id || '');
+        return { ...trap, level: profile?.level || trap.level, profile_name: profile?.name || (trap.profile_id ? 'Профиль недоступен' : 'Не назначен') };
+      }));
+      setProfiles(nextProfiles);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить парк ловушек');
     } finally {
-      setIsLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchTraps();
+    refresh(true);
+    const timer = window.setInterval(() => { refresh(); setTick(Date.now()); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
-    const storedProfileId = sessionStorage.getItem('hf_deploy_profile_id');
-    const storedProfileName = sessionStorage.getItem('hf_deploy_profile_name');
-    if (storedProfileId) {
-      setNewTrapProfileId(storedProfileId);
-      if (storedProfileName) {
-        setNewTrapName(`${storedProfileName} Instance`);
-      }
-      setIsCreateOpen(true);
+  useEffect(() => {
+    const id = sessionStorage.getItem('hf_deploy_profile_id');
+    if (id) {
+      const requested = Number(sessionStorage.getItem('hf_deploy_profile_revision'));
       sessionStorage.removeItem('hf_deploy_profile_id');
       sessionStorage.removeItem('hf_deploy_profile_name');
+      sessionStorage.removeItem('hf_deploy_profile_revision');
+      setProfileId(id);
+      setRequestedRevision(requested > 0 ? requested : null);
+      setStep(0);
     }
-
-    const handleDeployEvent = (e: any) => {
-      const p = e.detail;
-      if (p?.profileId) {
-        setNewTrapProfileId(p.profileId);
-        setNewTrapName(p.profileName ? `${p.profileName} Instance` : 'New Trap Instance');
-        setIsCreateOpen(true);
-      }
+    const onDeploy = (event: Event) => {
+      const detail = (event as CustomEvent<{ profileId?: string; revision?: number }>).detail;
+      if (detail?.profileId) { setProfileId(detail.profileId); setRequestedRevision(detail.revision || null); setStep(0); }
     };
+    window.addEventListener('honeyforge-deploy-profile', onDeploy);
+    return () => window.removeEventListener('honeyforge-deploy-profile', onDeploy);
+  }, []);
 
-    window.addEventListener('honeyforge-deploy-profile', handleDeployEvent);
-    return () => window.removeEventListener('honeyforge-deploy-profile', handleDeployEvent);
-  }, [fetchTraps]);
+  useEffect(() => {
+    if (!profileId) { setRevisions([]); setRevision(0); return; }
+    let active = true;
+    setRevisionError('');
+    api.profiles.revisions(profileId).then((items) => {
+      if (active) { setRevisions(items); setRevision(items.find((item) => item.revision === requestedRevision)?.revision || items[0]?.revision || 0); }
+    }).catch((cause) => { if (active) setRevisionError(cause.message); });
+    return () => { active = false; };
+  }, [profileId, requestedRevision]);
 
-  const handleCreateTrap = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTrapName.trim()) return;
+  const chosenRevision = revisions.find((item) => item.revision === revision);
+  useEffect(() => {
+    setBindings((chosenRevision?.config?.services || []).map((service) => ({ service_id: service.id || '', host_port: service.port, bind_address: '0.0.0.0' })));
+  }, [chosenRevision]);
 
-    setIsSubmitting(true);
+  useEffect(() => {
+    const sync = () => setSelectedId(window.location.hash.match(/^#traps\/([a-f0-9-]{36})$/i)?.[1] || null);
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
+  const selected = traps.find((trap) => trap.id === selectedId);
+  const filtered = useMemo(() => traps.filter((trap) =>
+    (levelFilter === 'all' || trap.level === levelFilter) &&
+    (profileFilter === 'all' || trap.profile_id === profileFilter) &&
+    (statusFilter === 'all' || trap.agent_status === statusFilter || trap.service_status === statusFilter || (statusFilter === 'unregistered' && !trap.last_seen_at))
+  ), [traps, levelFilter, profileFilter, statusFilter]);
+
+  const create = async () => {
+    if (!chosenRevision || !name.trim()) return;
+    setBusy(true);
+    setSubmitError('');
+    let trap: Trap | null = null;
     try {
-      const created = await api.traps.create({
-        name: newTrapName.trim(),
-        deployment_bindings: [
-          {
-            service_id: 'svc-1',
-            host_port: Number(newTrapPort),
-            bind_address: newTrapBindIp.trim() || undefined,
-          },
-        ],
+      trap = await api.traps.create({ name: name.trim(), deployment_bindings: bindings });
+      const assigned = await api.traps.assignProfile(trap.id, profileId, revision);
+      setCreated(assigned);
+      setStep(2);
+      await refresh();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Ошибка создания';
+      setSubmitError(trap ? `Запись ${trap.id} создана, но профиль не назначен: ${message}. Исправьте профиль и создайте новый экземпляр.` : message);
+      await refresh();
+    } finally { setBusy(false); }
+  };
+
+  const issueToken = async (trap: Trap) => {
+    if (role !== 'operator') return;
+    setBusy(true);
+    try {
+      const result = await api.traps.generateToken(trap.id);
+      setToken({ trapId: trap.id, value: result.token, expiresAt: Date.now() + result.expires_in_seconds * 1000 });
+    } catch (cause) {
+      notify('error', 'Отказ выдачи токена', cause instanceof Error ? cause.message : 'Неизвестная ошибка');
+    } finally { setBusy(false); }
+  };
+
+  const sendCommand = async (trap: Trap, type: 'start' | 'stop' | 'apply_profile') => {
+    if (!trap.profile_id || !trap.desired_revision) return;
+    try {
+      const result = await api.traps.sendCommand(trap.id, type, {
+        expected_profile_id: trap.profile_id, expected_revision: trap.desired_revision, ttl_seconds: 300,
       });
-
-      if (newTrapProfileId) {
-        await api.traps.assignProfile(created.id, newTrapProfileId, 1).catch(() => {});
-      }
-
-      notify('success', 'Ловушка зарегистрирована', `Ловушка "${created.name}" добавлена в парк`);
-      setIsCreateOpen(false);
-      setNewTrapName('');
-      setNewTrapPort(8080);
-      setNewTrapBindIp('0.0.0.0');
-      setNewTrapProfileId('');
-      fetchTraps();
-    } catch (err: any) {
-      notify('error', 'Ошибка регистрации ловушки', err.message);
-    } finally {
-      setIsSubmitting(false);
+      notify('info', 'Команда принята в очередь', `${result.status}. Выполнение агентом пока не подтверждено.`);
+      await refresh();
+    } catch (cause) {
+      notify('error', 'Команда отклонена', cause instanceof Error ? cause.message : 'Неизвестная ошибка');
     }
   };
 
-  const handleGenerateToken = async (trap: Trap) => {
-    try {
-      const res = await api.traps.generateToken(trap.id);
-      setActiveTokenModal({
-        trap,
-        token: res.token,
-        expiresAt: res.expires_at,
-        installCommand: res.install_command,
-      });
-      setIsCopied(false);
-      notify('success', 'Токен сгенерирован', `Одноразовый токен для ловушки ${trap.name} готов`);
-    } catch (err: any) {
-      notify('error', 'Ошибка генерации токена', err.message);
-    }
-  };
+  const closeWizard = () => { setStep(null); setToken(null); setCreated(null); setSubmitError(''); setName(''); setNode(''); };
+  const tokenValid = token && tick < token.expiresAt;
 
-  const handleSendCommand = async (trap: Trap, cmd: 'start' | 'stop' | 'apply_profile') => {
-    try {
-      await api.traps.sendCommand(trap.id, cmd, {
-        expected_profile_id: trap.profile_id,
-        expected_revision: trap.profile_revision || 1,
-        ttl_seconds: 300,
-      });
-      const actionLabels = {
-        start: 'Команда запуска отправлена',
-        stop: 'Команда остановки отправлена',
-        apply_profile: 'Профиль отправлен на синхронизацию',
-      };
-      notify('info', actionLabels[cmd], `Ловушка: ${trap.name}`);
-      fetchTraps();
-    } catch (err: any) {
-      notify('error', 'Ошибка отправки команды', err.message);
-    }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
-
-  const isViewer = role === 'viewer';
-
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Title */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Реестр ловушек (Парк приманок)</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Мониторинг статусов (online/offline/last-seen), ревизий профилей и управление агентами (FR-C2)
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {!isViewer && (
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="w-3.5 h-3.5" />}
-              onClick={() => setIsCreateOpen(true)}
-            >
-              Зарегистрировать ловушку
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
-            onClick={fetchTraps}
-            disabled={isLoading}
-          >
-            Обновить статус
-          </Button>
-        </div>
+  return <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div><h1 className="text-2xl font-bold text-slate-900">Парк ловушек</h1><p className="text-sm text-slate-500 mt-1">Регистрация агентов и фактическое состояние сервисов</p></div>
+      <div className="flex gap-2">
+        {role === 'operator' && <Button size="sm" leftIcon={<Plus size={16} />} onClick={() => setStep(0)}>Создать экземпляр</Button>}
+        <Button size="sm" variant="outline" leftIcon={<RefreshCw size={16} />} onClick={() => refresh(true)}>Обновить</Button>
       </div>
-
-      {isLoading ? (
-        <LoadingSkeleton rows={5} />
-      ) : error ? (
-        <ErrorState message={error} onRetry={fetchTraps} />
-      ) : traps.length === 0 ? (
-        <EmptyState
-          title="Ловушки не зарегистрированы"
-          description="Зарегистрируйте первую ловушку в контуре для начала сбора телеметрии"
-        />
-      ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm" aria-label="Таблица ловушек">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  <th scope="col" className="px-5 py-3.5">Ловушка</th>
-                  <th scope="col" className="px-5 py-3.5">Статус</th>
-                  <th scope="col" className="px-5 py-3.5">Уровень</th>
-                  <th scope="col" className="px-5 py-3.5">Назначенный профиль</th>
-                  <th scope="col" className="px-5 py-3.5">Сетевой адрес</th>
-                  <th scope="col" className="px-5 py-3.5">Активность (24ч)</th>
-                  <th scope="col" className="px-5 py-3.5 text-right">Управление</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {traps.map((trap) => {
-                  const isRevisionSynced = trap.profile_revision === trap.applied_revision;
-                  return (
-                    <tr key={trap.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">{trap.name}</div>
-                        <div className="text-xs text-slate-400 font-mono mt-0.5">{trap.id}</div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <StatusBadge status={trap.status} />
-                      </td>
-                      <td className="px-5 py-4">
-                        <LevelBadge level={trap.level} />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="text-xs font-medium text-slate-800">{trap.profile_name}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
-                          <span>rev {trap.applied_revision}</span>
-                          {!isRevisionSynced && (
-                            <span className="text-amber-600 font-semibold" title="Требуется синхронизация">
-                              (ожидает v{trap.profile_revision})
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="font-mono text-xs text-slate-800">{trap.ip_address}</div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          {trap.last_seen_at ? `${new Date(trap.last_seen_at).toUTCString().replace('GMT', 'UTC').slice(17, 25)} UTC` : trap.location || 'DMZ'}
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-semibold text-slate-800">{trap.attacks_count_24h}</span>
-                        <span className="text-xs text-slate-400 ml-1">атак</span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        {isViewer ? (
-                          <span className="text-xs text-slate-400 inline-flex items-center gap-1">
-                            <Lock className="w-3 h-3" /> Только чтение
-                          </span>
-                        ) : (
-                          <div className="inline-flex items-center gap-1.5 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => handleGenerateToken(trap)}
-                              className="px-2.5 py-1 text-xs font-medium bg-brand-50 text-brand-700 hover:bg-brand-100 border border-brand-200 rounded-md transition-colors inline-flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                              title="Сгенерировать Enrollment Token для агента"
-                            >
-                              <Key className="w-3 h-3" /> Токен
-                            </button>
-                            {!isRevisionSynced && trap.profile_id && (
-                              <button
-                                type="button"
-                                onClick={() => handleSendCommand(trap, 'apply_profile')}
-                                className="p-1 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                                title="Синхронизировать профиль (apply_profile)"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleSendCommand(trap, 'start')}
-                              className="p-1 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                              title="Запустить ловушку"
-                            >
-                              <Play className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendCommand(trap, 'stop')}
-                              className="p-1 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                              title="Остановить ловушку"
-                            >
-                              <Square className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Trap Registration Modal */}
-      {isCreateOpen && (
-        <Modal
-          isOpen={isCreateOpen}
-          onClose={() => setIsCreateOpen(false)}
-          title="Регистрация новой ловушки (Trap)"
-          description="Добавление узла приманки в реестр и назначение сетевых параметров развертывания"
-          maxWidth="lg"
-        >
-          <form onSubmit={handleCreateTrap} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Имя ловушки <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={newTrapName}
-                onChange={(e) => setNewTrapName(e.target.value)}
-                placeholder="например: DMZ-Web-Trap-03"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Порт сервиса (Host Port)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="65535"
-                  required
-                  value={newTrapPort}
-                  onChange={(e) => setNewTrapPort(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Bind IP интерфейс
-                </label>
-                <input
-                  type="text"
-                  value={newTrapBindIp}
-                  onChange={(e) => setNewTrapBindIp(e.target.value)}
-                  placeholder="0.0.0.0"
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white font-mono"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Начальный профиль конфигурации (опционально)
-              </label>
-              <select
-                value={newTrapProfileId}
-                onChange={(e) => setNewTrapProfileId(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white"
-              >
-                <option value="">Без профиля (будет назначен позже)</option>
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.level.toUpperCase()}, rev {p.revision})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsCreateOpen(false)}
-                disabled={isSubmitting}
-              >
-                Отмена
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                isLoading={isSubmitting}
-              >
-                Зарегистрировать ловушку
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {/* Enrollment Token Dialog */}
-      {activeTokenModal && (
-        <Modal
-          isOpen={!!activeTokenModal}
-          onClose={() => setActiveTokenModal(null)}
-          title={`Enrollment Token: ${activeTokenModal.trap.name}`}
-          description="Одноразовый секретный токен регистрации агента в центре управления"
-          maxWidth="lg"
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Одноразовый токен авторизации (Secret)
-              </label>
-              <div className="flex items-center gap-2 bg-slate-100 p-2.5 rounded-lg border border-slate-200 font-mono text-xs select-all">
-                <span className="flex-1 font-bold text-slate-900 break-all">{activeTokenModal.token}</span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(activeTokenModal.token)}
-                  className="p-1.5 text-slate-500 hover:text-slate-800 rounded bg-white shadow-xs border border-slate-200"
-                  title="Копировать токен"
-                >
-                  {isCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5" /> Команда развертывания агента на хосте ловушки
-              </label>
-              <div className="bg-slate-900 text-slate-100 p-3.5 rounded-lg font-mono text-xs overflow-x-auto select-all">
-                <code>
-                  {activeTokenModal.installCommand || `curl -sSL http://127.0.0.1:8081/agent/install.sh | sudo bash -s -- --token=${activeTokenModal.token}`}
-                </code>
-              </div>
-            </div>
-
-            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded-lg border border-amber-200">
-              ⚠️ <strong>Важно:</strong> Токен истекает через 10 минут (BE-01/02). Токен не отображается наблюдателям (Viewer) и инвалидируется сразу после успешной регистрации хоста.
-            </p>
-
-            <div className="flex justify-end pt-2">
-              <Button variant="primary" size="sm" onClick={() => setActiveTokenModal(null)}>
-                Готово
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
     </div>
-  );
+    <div className="bg-white border rounded-xl p-4 flex flex-wrap gap-3 text-sm">
+      <label>Уровень <select className="border rounded ml-2 p-1" value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}><option value="all">Все</option><option value="low">Low</option><option value="medium">Medium</option></select></label>
+      <label>Состояние <select className="border rounded ml-2 p-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Все</option><option value="unregistered">Ожидает регистрации</option><option value="online">Агент online</option><option value="offline">Агент offline</option><option value="running">Сервис работает</option><option value="stopped">Сервис остановлен</option><option value="error">Ошибка сервиса</option></select></label>
+      <label>Профиль <select className="border rounded ml-2 p-1" value={profileFilter} onChange={(e) => setProfileFilter(e.target.value)}><option value="all">Все</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+    </div>
+    {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3"><LevelBadge level={trap.level} /><div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs">{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}
+    {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{!selected.last_seen_at && <Button size="sm" onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={!selected.profile_id} onClick={() => sendCommand(selected, 'apply_profile')}>Применить профиль</Button><Button size="sm" variant="outline" disabled={!selected.profile_id} onClick={() => sendCommand(selected, 'start')}>Запустить</Button><Button size="sm" variant="outline" disabled={!selected.profile_id} onClick={() => sendCommand(selected, 'stop')}>Остановить</Button></div>}</section>}
+    {step !== null && role === 'operator' && <Modal isOpen onClose={closeWizard} title="Новый экземпляр" description={`Шаг ${step + 1} из 4`} maxWidth="xl"><div className="space-y-4 text-sm">
+      {step === 0 && <><label className="block">Профиль<select className="block w-full border rounded p-2 mt-1" value={profileId} onChange={(e) => setProfileId(e.target.value)}><option value="">Выберите профиль</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.level})</option>)}</select></label>{revisionError && <p role="alert" className="text-rose-700">{revisionError}</p>}<label className="block">Версия<select className="block w-full border rounded p-2 mt-1" value={revision} onChange={(e) => setRevision(Number(e.target.value))}>{revisions.map((r) => <option key={r.revision} value={r.revision}>Revision {r.revision}</option>)}</select></label><Button disabled={!chosenRevision} onClick={() => setStep(1)}>Далее</Button></>}
+      {step === 1 && <><label className="block">Имя экземпляра<input className="block w-full border rounded p-2 mt-1" maxLength={120} required value={name} onChange={(e) => setName(e.target.value)} /></label><label className="block">Узел запуска (подсказка оператору)<input className="block w-full border rounded p-2 mt-1" value={node} onChange={(e) => setNode(e.target.value)} placeholder="Например, linux-node-1" /></label><p className="text-xs text-slate-600">Узел не входит в текущий API реестра. Название узла укажите в имени экземпляра, если оно должно сохраниться.</p>{bindings.map((binding, index) => <div key={binding.service_id} className="grid grid-cols-2 gap-2"><label>Порт {binding.service_id}<input type="number" min={1} max={65535} className="block w-full border rounded p-2" value={binding.host_port} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, host_port: Number(e.target.value) } : b))} /></label><label>Bind IP<input className="block w-full border rounded p-2" value={binding.bind_address || ''} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, bind_address: e.target.value } : b))} /></label></div>)}<p className="bg-amber-50 border border-amber-200 p-3 rounded">Проверьте свободные порты и доступность интерфейса на подготовленном узле. Изменение host port после запуска требует пересоздания deployment.</p>{submitError && <p role="alert" className="text-rose-700">{submitError}</p>}<div className="flex gap-2"><Button variant="outline" onClick={() => setStep(0)}>Назад</Button><Button disabled={!name.trim() || bindings.some((b) => !b.service_id || b.host_port < 1 || b.host_port > 65535)} isLoading={busy} onClick={create}>Создать и назначить профиль</Button></div></>}
+      {step === 2 && created && <><p>Запись <strong>{created.name}</strong> создана. Агент ещё не зарегистрирован.</p><p className="font-mono text-xs break-all">trap_id: {created.id}</p><Button isLoading={busy} onClick={() => issueToken(created)}>Выдать одноразовый токен</Button>{token?.trapId === created.id && tokenValid && <TokenView token={token.value} expiresAt={token.expiresAt} />}{token?.trapId === created.id && !tokenValid && <p role="alert">Токен истёк. Выдайте новый; прежний будет отозван.</p>}<Button variant="outline" onClick={() => setStep(3)}>Комплект запуска</Button></>}
+      {step === 3 && created && <><p>Комплект должен содержать агент, конфигурацию и инструкцию для подготовленного Linux-узла.</p><p className="font-mono text-xs">trap_id: {created.id}</p><p>После скачивания статус остаётся «Ожидает регистрации». Проверяйте регистрацию и сервис по данным сервера.</p><p className="bg-amber-50 p-3 rounded border">Серверный endpoint deployment bundle пока отсутствует. Скачивание появится после интеграции BE-04.</p><Button variant="outline" onClick={closeWizard}>Закрыть</Button></>}
+    </div></Modal>}
+    {token && step === null && role === 'operator' && <Modal isOpen onClose={() => setToken(null)} title="Одноразовый токен"><div className="space-y-3">{tokenValid ? <TokenView token={token.value} expiresAt={token.expiresAt} /> : <p role="alert">Токен истёк. Выдайте новый в карточке.</p>}<p className="text-xs">При повторной выдаче предыдущий токен аннулируется. Сохраните новый только на защищённом узле.</p></div></Modal>}
+    {isDevModeActive() && <p className="text-xs text-amber-700">Демо-режим: состояния фиктивные. Для проверки реальной регистрации переключитесь на API.</p>}
+  </div>;
 };
+
+const TokenView: React.FC<{ token: string; expiresAt: number }> = ({ token, expiresAt }) => <div className="space-y-2"><p>Скопируйте сейчас. Повторно посмотреть токен нельзя.</p><div className="flex gap-2"><code className="bg-slate-100 p-2 rounded break-all flex-1">{token}</code><button type="button" title="Копировать токен" onClick={() => navigator.clipboard.writeText(token)}><Copy size={18} /></button></div><p className="text-xs">Истекает: {dateText(new Date(expiresAt).toISOString())}</p></div>;

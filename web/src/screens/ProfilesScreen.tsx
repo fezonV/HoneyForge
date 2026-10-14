@@ -59,6 +59,7 @@ export const ProfilesScreen: React.FC = () => {
   const handleDeployInstance = (prof: Profile) => {
     sessionStorage.setItem('hf_deploy_profile_id', prof.id);
     sessionStorage.setItem('hf_deploy_profile_name', prof.name);
+    sessionStorage.setItem('hf_deploy_profile_revision', String(prof.revision));
     window.dispatchEvent(
       new CustomEvent('honeyforge-deploy-profile', {
         detail: { profileId: prof.id, profileName: prof.name, revision: prof.revision },

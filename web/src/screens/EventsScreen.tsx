@@ -25,6 +25,13 @@ export const EventsScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [trapFilter, setTrapFilter] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('trap_id') || '');
+
+  useEffect(() => {
+    const sync = () => setTrapFilter(new URLSearchParams(window.location.hash.split('?')[1] || '').get('trap_id') || '');
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
 
   const fetchEvents = useCallback(async () => {
     setIsLoading(true);
@@ -32,6 +39,7 @@ export const EventsScreen: React.FC = () => {
     try {
       const data = await api.events.list({
         severity: severityFilter === 'all' ? undefined : severityFilter,
+        trap_id: trapFilter || undefined,
       });
       setEvents(data);
     } catch (err: any) {
@@ -39,7 +47,7 @@ export const EventsScreen: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [severityFilter]);
+  }, [severityFilter, trapFilter]);
 
   useEffect(() => {
     fetchEvents();
@@ -80,6 +88,7 @@ export const EventsScreen: React.FC = () => {
 
   // Filtered in memory
   const filteredEvents = events.filter((e) => {
+    if (trapFilter && e.trap_id !== trapFilter) return false;
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       const matchesIp = e.source_ip.toLowerCase().includes(query);
