@@ -63,7 +63,7 @@ func IPCHandler(queue *EventQueue, state *State, token string) http.Handler {
 			http.Error(w, "invalid source IP", http.StatusUnprocessableEntity)
 			return
 		}
-		if event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535) || event.DestinationPort < 0 || event.DestinationPort > 65535 {
+		if event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535) || event.DestinationPort < 1 || event.DestinationPort > 65535 {
 			http.Error(w, "invalid event port", http.StatusUnprocessableEntity)
 			return
 		}

@@ -359,6 +359,6 @@ func be03Event(eventID, trapID, agentID, profileID, sessionID string, revision i
 	return contracts.Event{
 		SchemaVersion: "1.0", EventID: eventID, TrapID: trapID, AgentID: agentID,
 		ServiceID: "web", SessionID: sessionID, ProfileID: profileID, AppliedRevision: &revision,
-		EventType: eventType, Timestamp: timestamp, Protocol: "http", Payload: map[string]any{"fixture": fmt.Sprint(eventType)},
+		EventType: eventType, Timestamp: timestamp, DestinationPort: 8080, Protocol: "http", Payload: map[string]any{"fixture": fmt.Sprint(eventType)},
 	}
 }

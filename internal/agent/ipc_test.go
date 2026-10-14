@@ -23,7 +23,7 @@ func TestIPCHandlerPersistsEventAndInjectsAgentIdentity(t *testing.T) {
 	state.SetConfig(&ConfigResponse{ProfileID: "44444444-4444-4444-8444-444444444444", Revision: 7})
 	handler := IPCHandler(queue, state, "ipc-secret")
 	revision := 3
-	event := contracts.Event{SchemaVersion: "1.0", EventID: "33333333-3333-4333-8333-333333333333", AgentID: "spoofed", TrapID: state.TrapID, ProfileID: "55555555-5555-4555-8555-555555555555", AppliedRevision: &revision, ServiceID: "web", EventType: "http.request", Timestamp: "2026-10-14T12:00:00Z", Protocol: "http", Payload: map[string]any{}}
+	event := contracts.Event{SchemaVersion: "1.0", EventID: "33333333-3333-4333-8333-333333333333", AgentID: "spoofed", TrapID: state.TrapID, ProfileID: "55555555-5555-4555-8555-555555555555", AppliedRevision: &revision, ServiceID: "web", EventType: "http.request", Timestamp: "2026-10-14T12:00:00Z", DestinationPort: 8080, Protocol: "http", Payload: map[string]any{}}
 	body, _ := json.Marshal(event)
 	req := httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer ipc-secret")
@@ -83,7 +83,7 @@ func TestIPCHandlerRejectsUnauthorizedAndUnavailableQueue(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d", w.Code)
 	}
-	req = httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewBufferString(`{"event_id":"33333333-3333-4333-8333-333333333333","service_id":"web","event_type":"http.request","timestamp":"2026-10-14T12:00:00Z","protocol":"http"}`))
+	req = httptest.NewRequest(http.MethodPost, "/v1/events", bytes.NewBufferString(`{"schema_version":"1.0","event_id":"33333333-3333-4333-8333-333333333333","service_id":"web","event_type":"http.request","timestamp":"2026-10-14T12:00:00Z","destination_port":8080,"protocol":"http","payload":{}}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	w = httptest.NewRecorder()
 	IPCHandler(queue, nil, "secret").ServeHTTP(w, req)

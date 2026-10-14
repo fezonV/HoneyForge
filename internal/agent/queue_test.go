@@ -10,7 +10,7 @@ import (
 )
 
 func queueEvent(id string) contracts.Event {
-	return contracts.Event{SchemaVersion: "1.0", EventID: id, AgentID: "agent-1", TrapID: "trap-1", ServiceID: "web", EventType: "http.request", Timestamp: "2026-10-13T00:00:00Z", Protocol: "http", Payload: map[string]any{"path": "/"}}
+	return contracts.Event{SchemaVersion: "1.0", EventID: id, AgentID: "agent-1", TrapID: "trap-1", ServiceID: "web", EventType: "http.request", Timestamp: "2026-10-13T00:00:00Z", DestinationPort: 8080, Protocol: "http", Payload: map[string]any{"path": "/"}}
 }
 
 func TestEventQueueDeduplicatesAndDetectsConflicts(t *testing.T) {

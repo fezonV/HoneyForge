@@ -16,6 +16,8 @@ import (
 	"honeyforge/internal/contracts"
 )
 
+const commandDeliveryLease = 30 * time.Second
+
 func validateBindings(bindings []contracts.DeploymentBinding) map[string]string {
 	f := map[string]string{}
 	if len(bindings) > 16 {
@@ -651,28 +653,14 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 	accepted := make([]string, 0, len(request.Events))
 	duplicates := make([]string, 0)
 	for _, event := range request.Events {
-		if !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID || event.ServiceID == "" || len(event.ServiceID) > 64 || !validTelemetryEventType(event.EventType) || event.SchemaVersion != "1.0" || event.Protocol != "http" || event.Payload == nil || len(event.Payload) > 64 {
+		if event.SchemaVersion != "1.0" || !contracts.ValidID(event.EventID) || event.TrapID != id || event.AgentID != agentID ||
+			event.ServiceID == "" || len(event.ServiceID) > 64 || !validTelemetryEventType(event.EventType) || event.Protocol != "http" ||
+			(event.SessionID != "" && !contracts.ValidID(event.SessionID)) || (event.ProfileID != "" && !contracts.ValidID(event.ProfileID)) ||
+			((event.ProfileID == "") != (event.AppliedRevision == nil)) || (event.AppliedRevision != nil && *event.AppliedRevision < 1) ||
+			(event.SourceIP != "" && net.ParseIP(event.SourceIP) == nil) ||
+			(event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535)) || event.DestinationPort < 1 || event.DestinationPort > 65535 ||
+			event.Payload == nil || len(event.Payload) > 64 {
 			fail(w, r, 422, "validation_failed", "event identity or fields are invalid", nil)
-			return
-		}
-		if event.SessionID != "" && !contracts.ValidID(event.SessionID) {
-			fail(w, r, 422, "validation_failed", "session_id must be a UUID", nil)
-			return
-		}
-		if event.ProfileID != "" && !contracts.ValidID(event.ProfileID) {
-			fail(w, r, 422, "validation_failed", "profile_id must be a UUID", nil)
-			return
-		}
-		if (event.ProfileID == "") != (event.AppliedRevision == nil) || (event.AppliedRevision != nil && *event.AppliedRevision < 1) {
-			fail(w, r, 422, "validation_failed", "profile_id and positive applied_revision must be provided together", nil)
-			return
-		}
-		if event.SourceIP != "" && net.ParseIP(event.SourceIP) == nil {
-			fail(w, r, 422, "validation_failed", "source_ip must be a valid IP address", nil)
-			return
-		}
-		if event.SourcePort != nil && (*event.SourcePort < 1 || *event.SourcePort > 65535) || event.DestinationPort < 0 || event.DestinationPort > 65535 {
-			fail(w, r, 422, "validation_failed", "event ports must be between 1 and 65535", nil)
 			return
 		}
 		occurred, parseErr := time.Parse(time.RFC3339Nano, event.Timestamp)
@@ -707,7 +695,15 @@ func (s *Server) agentEvents(w http.ResponseWriter, r *http.Request) {
 		err = tx.QueryRow(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,NULLIF($7,'')::uuid,$8,$9,$10,NULLIF($11,'')::inet,$12,$13,$14,$15) ON CONFLICT (agent_id,id) DO NOTHING RETURNING true`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&inserted)
 		if errors.Is(err, pgx.ErrNoRows) {
 			var sameContent bool
-			if err = tx.QueryRow(ctx, `SELECT schema_version=$2 AND trap_id=$3 AND agent_id=$4 AND service_id=$5 AND session_id IS NOT DISTINCT FROM NULLIF($6,'')::uuid AND profile_id IS NOT DISTINCT FROM NULLIF($7,'')::uuid AND applied_revision IS NOT DISTINCT FROM $8 AND event_type=$9 AND occurred_at=$10 AND source_ip IS NOT DISTINCT FROM NULLIF($11,'')::inet AND source_port IS NOT DISTINCT FROM $12 AND destination_port=$13 AND protocol=$14 AND payload=$15::jsonb FROM events WHERE agent_id=$4 AND id=$1`, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID, event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP, event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&sameContent); err != nil {
+			err = tx.QueryRow(ctx, `SELECT schema_version=$3 AND trap_id=$4::uuid AND agent_id=$5::uuid AND service_id=$6 AND
+				session_id IS NOT DISTINCT FROM NULLIF($7,'')::uuid AND profile_id IS NOT DISTINCT FROM NULLIF($8,'')::uuid AND
+				applied_revision IS NOT DISTINCT FROM $9::integer AND event_type=$10 AND occurred_at=$11::timestamptz AND
+				source_ip IS NOT DISTINCT FROM NULLIF($12,'')::inet AND source_port IS NOT DISTINCT FROM $13::integer AND
+				destination_port IS NOT DISTINCT FROM $14::integer AND protocol=$15 AND payload=$16::jsonb
+				FROM events WHERE agent_id=$1 AND id=$2`, agentID, event.EventID, event.SchemaVersion, event.TrapID, event.AgentID,
+				event.ServiceID, event.SessionID, event.ProfileID, event.AppliedRevision, event.EventType, occurred, event.SourceIP,
+				event.SourcePort, event.DestinationPort, event.Protocol, payload).Scan(&sameContent)
+			if err != nil {
 				fail(w, r, 503, "not_ready", "event identity could not be checked", nil)
 				return
 			}
@@ -761,7 +757,11 @@ func (s *Server) agentCommands(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 401, "unauthorized", "agent authentication required", nil)
 		return
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text,trap_id::text,command_type,expected_profile_id::text,expected_revision,target_profile_id::text,target_revision,status,expires_at,created_at FROM commands WHERE trap_id=$1 AND status='queued' AND expires_at>now() ORDER BY created_at,id LIMIT 20 FOR UPDATE SKIP LOCKED`, id)
+	if _, err = tx.Exec(ctx, `UPDATE commands SET status='expired',delivered_at=NULL WHERE trap_id=$1 AND status IN ('queued','delivered') AND expires_at<=now()`, id); err != nil {
+		fail(w, r, 503, "not_ready", "commands unavailable", nil)
+		return
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text,trap_id::text,command_type,expected_profile_id::text,expected_revision,target_profile_id::text,target_revision,status,expires_at,created_at FROM commands WHERE trap_id=$1 AND expires_at>now() AND (status='queued' OR (status='delivered' AND (delivered_at IS NULL OR delivered_at<=now()-($2::bigint*interval '1 second')))) ORDER BY created_at,id LIMIT 20 FOR UPDATE SKIP LOCKED`, id, int64(commandDeliveryLease/time.Second))
 	if err != nil {
 		fail(w, r, 503, "not_ready", "commands unavailable", nil)
 		return
@@ -777,6 +777,7 @@ func (s *Server) agentCommands(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.ExpiresAt, c.CreatedAt = expires.UTC().Format(time.RFC3339Nano), created.UTC().Format(time.RFC3339Nano)
+		c.Status = "delivered"
 		commands = append(commands, c)
 		ids = append(ids, c.ID)
 	}
@@ -784,14 +785,20 @@ func (s *Server) agentCommands(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 503, "not_ready", "commands unavailable", nil)
 		return
 	}
+	rows.Close()
 	for _, commandID := range ids {
-		if _, err = tx.Exec(ctx, `UPDATE commands SET status='delivered' WHERE id=$1 AND status='queued'`, commandID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE commands SET status='delivered',delivered_at=now() WHERE id=$1`, commandID); err != nil {
 			fail(w, r, 503, "not_ready", "commands unavailable", nil)
 			return
 		}
 	}
-	_, _ = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID)
-	_, _ = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now() WHERE id=$1`, id)
+	if _, err = tx.Exec(ctx, `UPDATE agents SET last_seen=now() WHERE id=$1`, agentID); err == nil {
+		_, err = tx.Exec(ctx, `UPDATE traps SET agent_status='online',last_seen=now() WHERE id=$1 AND deleted_at IS NULL`, id)
+	}
+	if err != nil {
+		fail(w, r, 503, "not_ready", "agent state could not be updated", nil)
+		return
+	}
 	if err = tx.Commit(ctx); err != nil {
 		fail(w, r, 503, "not_ready", "commands unavailable", nil)
 		return
@@ -817,6 +824,10 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 422, "validation_failed", "status must be applied or failed", nil)
 		return
 	}
+	if len(req.Error) > 500 || (req.Status == "applied" && req.Error != "") {
+		fail(w, r, 422, "validation_failed", "error is only allowed for failed results and must be at most 500 characters", nil)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	tx, err := s.db.Begin(ctx)
@@ -834,8 +845,9 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 	var targetProfile *string
 	var targetRevision *int
 	var currentStatus string
+	var currentError string
 	var expires time.Time
-	err = tx.QueryRow(ctx, `SELECT command_type,target_profile_id::text,target_revision,status,expires_at FROM commands WHERE id=$1 AND trap_id=$2 FOR UPDATE`, commandID, id).Scan(&commandType, &targetProfile, &targetRevision, &currentStatus, &expires)
+	err = tx.QueryRow(ctx, `SELECT command_type,target_profile_id::text,target_revision,status,result_error,expires_at FROM commands WHERE id=$1 AND trap_id=$2 FOR UPDATE`, commandID, id).Scan(&commandType, &targetProfile, &targetRevision, &currentStatus, &currentError, &expires)
 	if noRows(err) {
 		fail(w, r, 404, "not_found", "command not found", nil)
 		return
@@ -845,7 +857,16 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if currentStatus == "expired" || time.Now().After(expires) {
-		_, _ = tx.Exec(ctx, `UPDATE commands SET status='expired' WHERE id=$1`, commandID)
+		if currentStatus != "expired" {
+			if _, err = tx.Exec(ctx, `UPDATE commands SET status='expired',delivered_at=NULL WHERE id=$1`, commandID); err != nil {
+				fail(w, r, 503, "not_ready", "command state unavailable", nil)
+				return
+			}
+			if err = tx.Commit(ctx); err != nil {
+				fail(w, r, 503, "not_ready", "command unavailable", nil)
+				return
+			}
+		}
 		fail(w, r, 409, "command_expired", "command has expired", nil)
 		return
 	}
@@ -854,10 +875,14 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 			fail(w, r, 503, "not_ready", "command unavailable", nil)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"status": currentStatus})
+		writeJSON(w, 200, map[string]string{"status": currentStatus, "error": currentError})
 		return
 	}
-	if _, err = tx.Exec(ctx, `UPDATE commands SET status=$1 WHERE id=$2`, req.Status, commandID); err != nil {
+	if currentStatus != "delivered" {
+		fail(w, r, 409, "command_not_delivered", "command has not been delivered to the agent", nil)
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE commands SET status=$1,result_error=$2,delivered_at=NULL WHERE id=$3`, req.Status, req.Error, commandID); err != nil {
 		fail(w, r, 503, "not_ready", "command unavailable", nil)
 		return
 	}
@@ -872,7 +897,7 @@ func (s *Server) agentCommandResult(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 503, "not_ready", "command unavailable", nil)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": req.Status})
+	writeJSON(w, 200, map[string]string{"status": req.Status, "error": req.Error})
 }
 
 func agentBearer(r *http.Request) (string, bool) {
@@ -969,12 +994,12 @@ func (s *Server) listCommands(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 400, "invalid_filter", "unsupported command status", nil)
 		return
 	}
-	_, err := s.db.Exec(r.Context(), `UPDATE commands SET status='expired' WHERE trap_id=$1 AND status IN ('queued','delivered') AND expires_at<=now()`, id)
+	_, err := s.db.Exec(r.Context(), `UPDATE commands SET status='expired',delivered_at=NULL WHERE trap_id=$1 AND status IN ('queued','delivered') AND expires_at<=now()`, id)
 	if err != nil {
 		fail(w, r, 500, "internal_error", "request could not be completed", nil)
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT id::text,trap_id::text,command_type,expected_profile_id::text,expected_revision,target_profile_id::text,target_revision,status,expires_at,created_at FROM commands WHERE trap_id=$1 AND id>$2 AND ($3='' OR status=$3) ORDER BY id LIMIT $4`, id, nullableCursor(cursor), status, limit+1)
+	rows, err := s.db.Query(r.Context(), `SELECT id::text,trap_id::text,command_type,expected_profile_id::text,expected_revision,target_profile_id::text,target_revision,status,expires_at,created_at,result_error FROM commands WHERE trap_id=$1 AND id>$2 AND ($3='' OR status=$3) ORDER BY id LIMIT $4`, id, nullableCursor(cursor), status, limit+1)
 	if err != nil {
 		fail(w, r, 500, "internal_error", "request could not be completed", nil)
 		return
@@ -984,7 +1009,7 @@ func (s *Server) listCommands(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var c contracts.Command
 		var expiresAt, createdAt time.Time
-		if err = rows.Scan(&c.ID, &c.TrapID, &c.Type, &c.ExpectedProfileID, &c.ExpectedRevision, &c.TargetProfileID, &c.TargetRevision, &c.Status, &expiresAt, &createdAt); err != nil {
+		if err = rows.Scan(&c.ID, &c.TrapID, &c.Type, &c.ExpectedProfileID, &c.ExpectedRevision, &c.TargetProfileID, &c.TargetRevision, &c.Status, &expiresAt, &createdAt, &c.Error); err != nil {
 			break
 		}
 		c.ExpiresAt = expiresAt.UTC().Format(time.RFC3339Nano)

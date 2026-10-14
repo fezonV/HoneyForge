@@ -146,6 +146,9 @@ func TestLoadStateRejectsBroadPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"agent_id":"a","trap_id":"t","agent_token":"s"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := LoadState(path); err == nil || !strings.Contains(err.Error(), "permissions") {
 		t.Fatalf("LoadState error = %v, want permission error", err)
 	}

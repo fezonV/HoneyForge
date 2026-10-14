@@ -1,5 +1,3 @@
 # Local development plan.
 /docs/HONEYFORGE_PLAN.md
-
-# Markdown files are kept local and are not part of feature branches.
 *.md

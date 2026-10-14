@@ -177,11 +177,23 @@ func envOr(key, fallback string) string {
 func sendHeartbeat(ctx context.Context, client *agent.Client, state *agent.State, adapter agent.DecoyAdapter) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	serviceState, err := adapter.ServiceState(requestCtx)
-	if err != nil {
-		serviceState = "error"
+	return client.Heartbeat(requestCtx, state, currentServiceState(requestCtx, adapter))
+}
+
+func currentServiceState(ctx context.Context, adapter agent.DecoyAdapter) string {
+	if adapter == nil {
+		return "unknown"
 	}
-	return client.Heartbeat(requestCtx, state, serviceState)
+	serviceState, err := adapter.ServiceState(ctx)
+	if err != nil {
+		return "error"
+	}
+	switch serviceState {
+	case "unknown", "running", "stopped", "degraded", "error":
+		return serviceState
+	default:
+		return "error"
+	}
 }
 
 func defaultStatePath() string {
