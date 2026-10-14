@@ -16,6 +16,7 @@ import {
   ProfileConfig,
   ProfileRevision,
   TrapCommand,
+  RegistrationAttempt,
 } from './types';
 import {
   FIXTURE_OPERATOR,
@@ -179,7 +180,11 @@ function mapTrap(t: any): Trap {
   const agentStatus = t.agent_status === 'online' ? 'online' : 'offline';
   return {
     id: t.id, name: t.name,
-    status: !seen ? 'unregistered' : agentStatus,
+    status: t.registration_status === 'rejected' ? 'registration_failed' : !seen && t.registration_status !== 'registered' ? 'unregistered' : agentStatus,
+    deployment_node: t.deployment_node || '',
+    registration_status: t.registration_status,
+    agent_id: t.agent_id,
+    last_registration_attempt: t.last_registration_attempt,
     level: 'low', // Enriched from the assigned profile by the screen.
     desired_profile_id: t.desired_profile_id,
     desired_revision: t.desired_revision,
@@ -415,6 +420,7 @@ export const api = {
           decoy_path: '/static/bundle.js',
           hidden_service_name: 'systemd-timesyncd-worker',
         },
+        config: current.config,
         created_at: p.created_at,
         updated_at: p.updated_at,
         traps_count: 0,
@@ -566,6 +572,11 @@ export const api = {
   },
 
   traps: {
+    async registrationAttempts(trapId: string): Promise<RegistrationAttempt[]> {
+      if (isDevModeActive()) return [];
+      const page = await request<Page<RegistrationAttempt>>(`/api/v1/traps/${encodeURIComponent(trapId)}/registration-attempts?limit=100`);
+      return page.items || [];
+    },
     async commands(trapId: string): Promise<TrapCommand[]> {
       if (isDevModeActive()) return [];
       const items: TrapCommand[] = [];
@@ -607,12 +618,14 @@ export const api = {
       return items.map(mapTrap);
     },
 
-    async create(data: { name: string; deployment_bindings?: DeploymentBinding[] }): Promise<Trap> {
+    async create(data: { name: string; deployment_node?: string; deployment_bindings?: DeploymentBinding[] }): Promise<Trap> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 250));
         const newTrap: Trap = {
           id: `c3d4e5f6-a1b2-4c3d-ae4f-${Date.now().toString(16).padStart(12, '0')}`.slice(0, 36),
           name: data.name,
+          deployment_node: data.deployment_node,
+          registration_status: 'pending',
           status: 'unregistered',
           level: 'low',
           profile_name: 'Не назначен',
@@ -631,6 +644,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({
           name: data.name,
+          deployment_node: data.deployment_node || '',
           deployment_bindings: data.deployment_bindings || [],
         }),
       });

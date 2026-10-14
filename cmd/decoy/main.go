@@ -16,11 +16,13 @@ import (
 	"time"
 
 	"honeyforge/internal/decoy"
+	"honeyforge/internal/visitorproxy"
 )
 
 func main() {
 	configPath := flag.String("config", os.Getenv("HF_DECOY_CONFIG"), "path to the applied profile JSON")
 	publicBind := flag.String("bind", envOr("HF_DECOY_BIND", "127.0.0.1"), "address on which public decoy HTTP services listen")
+	proxyProtocol := flag.Bool("proxy-protocol", false, "require PROXY v1 from a trusted private visitor gateway")
 	adminAddr := flag.String("admin-listen", envOr("HF_DECOY_ADMIN_LISTEN", "127.0.0.1:9100"), "private agent administration listener")
 	adminToken := flag.String("admin-token", os.Getenv("HF_AGENT_DECOY_IPC_TOKEN"), "shared secret for local agent to control the decoy")
 	adminTokenFile := flag.String("admin-token-file", os.Getenv("HF_AGENT_DECOY_IPC_TOKEN_FILE"), "file containing the agent-to-decoy IPC secret")
@@ -74,6 +76,9 @@ func main() {
 			closeListeners(listeners)
 			_ = adminListener.Close()
 			log.Fatalf("bind decoy service %s: %v", service.ID, listenErr)
+		}
+		if *proxyProtocol {
+			listener = visitorproxy.Listener{Listener: listener}
 		}
 		listeners = append(listeners, listener)
 	}

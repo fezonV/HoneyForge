@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Plus, RefreshCw } from 'lucide-react';
-import { DeploymentBinding, Profile, ProfileRevision, Trap, TrapCommand } from '../api/types';
+import { DeploymentBinding, Profile, ProfileRevision, Trap, TrapCommand, RegistrationAttempt } from '../api/types';
 import { api, isDevModeActive } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -14,7 +14,8 @@ const dateText = (value?: string) => value ? new Date(value).toLocaleString('ru-
 const serviceText = (value?: string) => ({ running: 'Работает', stopped: 'Остановлен', degraded: 'Работает с ошибками', error: 'Ошибка', unknown: 'Неизвестно' }[value || 'unknown'] || 'Неизвестно');
 
 function progress(trap: Trap): string {
-  if (!trap.last_seen_at) return 'Ожидает регистрации';
+  if (trap.registration_status === 'rejected') return 'Отказ регистрации';
+  if (!trap.last_seen_at) return trap.registration_status === 'registered' ? 'Агент зарегистрирован · ожидает связи' : 'Ожидает регистрации';
   if (trap.agent_status !== 'online') return 'Агент offline';
   if (!trap.applied_revision || trap.applied_profile_id !== trap.desired_profile_id || trap.applied_revision !== trap.desired_revision) return 'Агент зарегистрирован · ожидает применения';
   if (trap.service_status === 'running') return 'Сервис работает';
@@ -38,6 +39,9 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
   const [revisions, setRevisions] = useState<ProfileRevision[]>([]);
   const [revisionError, setRevisionError] = useState('');
   const [name, setName] = useState('');
+  const [node, setNode] = useState('');
+  const [registrationAttempts, setRegistrationAttempts] = useState<RegistrationAttempt[]>([]);
+  const [registrationError, setRegistrationError] = useState('');
   const [bindings, setBindings] = useState<DeploymentBinding[]>([]);
   const [created, setCreated] = useState<Trap | null>(null);
   const [submitError, setSubmitError] = useState('');
@@ -131,6 +135,19 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
   }, [selectedId, realtimeRevision, tick, commandRevision]);
 
   useEffect(() => {
+    setRegistrationAttempts([]); setRegistrationError('');
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let active = true;
+    api.traps.registrationAttempts(selectedId).then((items) => {
+      if (active) { setRegistrationAttempts(items); setRegistrationError(''); }
+    }).catch((cause) => { if (active) setRegistrationError(cause instanceof Error ? cause.message : 'История регистраций недоступна'); });
+    return () => { active = false; };
+  }, [selectedId, realtimeRevision, tick]);
+
+  useEffect(() => {
     const id = sessionStorage.getItem('hf_deploy_profile_id');
     if (id) {
       const requested = Number(sessionStorage.getItem('hf_deploy_profile_revision'));
@@ -183,7 +200,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
   const filtered = useMemo(() => traps.filter((trap) =>
     (levelFilter === 'all' || trap.level === levelFilter) &&
     (profileFilter === 'all' || trap.profile_id === profileFilter) &&
-    (statusFilter === 'all' || (statusFilter === 'unregistered' ? !trap.last_seen_at : ['online', 'offline'].includes(statusFilter) ? !!trap.last_seen_at && trap.agent_status === statusFilter : trap.service_status === statusFilter))
+    (statusFilter === 'all' || (statusFilter === 'registration_failed' ? trap.registration_status === 'rejected' : statusFilter === 'unregistered' ? !trap.last_seen_at && trap.registration_status !== 'registered' && trap.registration_status !== 'rejected' : ['online', 'offline'].includes(statusFilter) ? !!trap.last_seen_at && trap.agent_status === statusFilter : trap.service_status === statusFilter))
   ), [traps, levelFilter, profileFilter, statusFilter]);
 
   const create = async () => {
@@ -192,7 +209,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
     setSubmitError('');
     let trap: Trap | null = created;
     try {
-      if (!trap) trap = await api.traps.create({ name: name.trim(), deployment_bindings: bindings });
+      if (!trap) trap = await api.traps.create({ name: name.trim(), deployment_node: node.trim(), deployment_bindings: bindings });
       if (!mounted.current || currentRole.current !== 'operator') return;
       setCreated(trap);
       const assigned = await api.traps.assignProfile(trap.id, profileId, revision);
@@ -223,7 +240,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
 
   const closeWizard = () => {
     if (busy) return;
-    setStep(null); setToken(null); setCreated(null); setSubmitError(''); setBundleError(''); setName('');
+    setStep(null); setToken(null); setCreated(null); setSubmitError(''); setBundleError(''); setName(''); setNode('');
     setProfileId(''); setRequestedRevision(null); setBindings([]);
   };
   const downloadBundle = async (trap: Trap) => {
@@ -247,16 +264,17 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
     </div>
     <div className="bg-white border rounded-xl p-4 flex flex-wrap gap-3 text-sm">
       <label>Уровень <select className="border rounded ml-2 p-1" value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}><option value="all">Все</option><option value="low">Low</option><option value="medium">Medium</option></select></label>
-      <label>Состояние <select className="border rounded ml-2 p-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Все</option><option value="unregistered">Ожидает регистрации</option><option value="online">Агент online</option><option value="offline">Агент offline</option><option value="running">Сервис работает</option><option value="stopped">Сервис остановлен</option><option value="error">Ошибка сервиса</option></select></label>
+      <label>Состояние <select className="border rounded ml-2 p-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Все</option><option value="unregistered">Ожидает регистрации</option><option value="registration_failed">Отказ регистрации</option><option value="online">Агент online</option><option value="offline">Агент offline</option><option value="running">Сервис работает</option><option value="stopped">Сервис остановлен</option><option value="error">Ошибка сервиса</option></select></label>
       <label>Профиль <select className="border rounded ml-2 p-1" value={profileFilter} onChange={(e) => setProfileFilter(e.target.value)}><option value="all">Все</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     </div>
-    {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3">{trap.profile_id ? <LevelBadge level={trap.level} /> : '—'}<div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs">{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}
-    {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{!selected.last_seen_at && <Button size="sm" disabled={busy} onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => { setBundleError(''); setBundleTrap(selected); }}>Комплект запуска</Button></div>}</section>}
+    {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Узел / Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3">{trap.profile_id ? <LevelBadge level={trap.level} /> : '—'}<div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs"><div>{trap.deployment_node || 'Узел не указан'}</div>{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}
+    {selected && <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="Карточка ловушки"><h2 className="text-lg font-semibold">{selected.name}</h2><p className="font-mono text-xs">trap_id: {selected.id}</p><p>Узел запуска: {selected.deployment_node || 'Не указан'}</p>{selected.agent_id && <p className="font-mono text-xs">agent_id: {selected.agent_id}</p>}<p>{progress(selected)} · агент: {selected.agent_status === 'online' ? 'в сети' : 'не в сети'} · сервис: {serviceText(selected.service_status)}</p><p>Профиль: {selected.profile_name}, назначенная версия {selected.desired_revision ?? '—'}, применённая {selected.applied_revision ?? '—'}</p><p>Последняя связь: {dateText(selected.last_seen_at)}</p><p className="text-xs text-slate-600">Изменение опубликованного порта узла требует пересоздания комплекта на узле.</p>{role === 'operator' && <div className="flex flex-wrap gap-2">{selected.registration_status !== 'registered' && !selected.last_seen_at && <Button size="sm" disabled={busy} onClick={() => issueToken(selected)}>Выдать токен регистрации</Button>}<Button size="sm" variant="outline" disabled={busy || !selected.profile_id} onClick={() => { setBundleError(''); setBundleTrap(selected); }}>Комплект запуска</Button></div>}</section>}
+    {selected && <RegistrationHistory attempts={registrationAttempts} error={registrationError} />}
     {selected && <TrapControlPanel key={`${selected.id}:${user?.id}:${role}`} trap={selected} profiles={profiles} commands={commands} updatedAt={refreshedAt} fresh={!loading && !error && !commandsError && !commandsLoading} onChanged={() => { setCommandRevision((value) => value + 1); void refresh(); }} />}
     {selected && <CommandHistory commands={commands} error={commandsError} loading={commandsLoading} />}
     {step !== null && role === 'operator' && <Modal isOpen onClose={closeWizard} title="Новый экземпляр" description={`Шаг ${step + 1} из 4`} maxWidth="xl"><div className="space-y-4 text-sm">
       {step === 0 && <><label className="block">Профиль<select className="block w-full border rounded p-2 mt-1" aria-label="Профиль" value={profileId} onChange={(e) => { setProfileId(e.target.value); setRequestedRevision(null); }}><option value="">Выберите профиль</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.level})</option>)}</select></label>{revisionError && <p role="alert" className="text-rose-700">{revisionError}</p>}<label className="block">Версия<select className="block w-full border rounded p-2 mt-1" aria-label="Версия" value={revision} onChange={(e) => setRevision(Number(e.target.value))}>{revisions.map((r) => <option key={r.revision} value={r.revision}>Revision {r.revision}</option>)}</select></label><Button disabled={revisionLoading || !chosenRevision} onClick={() => setStep(1)}>Далее</Button></>}
-      {step === 1 && <><label className="block">Имя экземпляра<input className="block w-full border rounded p-2 mt-1" maxLength={120} required disabled={!!created} value={name} onChange={(e) => setName(e.target.value)} /></label>{bindings.map((binding, index) => <div key={binding.service_id} className="grid grid-cols-2 gap-2"><label>Порт {binding.service_id}<input type="number" min={1} max={65535} className="block w-full border rounded p-2" disabled={!!created} value={binding.host_port} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, host_port: Number(e.target.value) } : b))} /></label><label>Bind IP<input className="block w-full border rounded p-2" disabled={!!created} value={binding.bind_address || ''} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, bind_address: e.target.value } : b))} /></label></div>)}<p className="bg-amber-50 border border-amber-200 p-3 rounded">Проверьте свободные порты и доступность интерфейса на подготовленном узле. Изменение host port после запуска требует пересоздания deployment.</p>{submitError && <p role="alert" className="text-rose-700">{submitError}</p>}<div className="flex gap-2"><Button variant="outline" disabled={!!created || busy} onClick={() => setStep(0)}>Назад</Button><Button disabled={!name.trim() || bindings.some((b) => !b.service_id || !Number.isInteger(b.host_port) || b.host_port < 1 || b.host_port > 65535)} isLoading={busy} onClick={create}>{created ? 'Повторить назначение профиля' : 'Создать и назначить профиль'}</Button></div></>}
+      {step === 1 && <><label className="block">Имя экземпляра<input className="block w-full border rounded p-2 mt-1" maxLength={120} required disabled={!!created} value={name} onChange={(e) => setName(e.target.value)} /></label><label className="block">Узел запуска<input className="block w-full border rounded p-2 mt-1" maxLength={253} value={node} disabled={!!created} onChange={(e) => setNode(e.target.value)} placeholder="linux-node-01" /></label><p className="text-xs text-slate-600">Сохранённое имя подготовленного узла; запуск комплекта на нём выполняется оператором.</p>{new TextEncoder().encode(node.trim()).length > 253 && <p role="alert">Имя узла не должно превышать 253 байта UTF-8.</p>}{bindings.map((binding, index) => <div key={binding.service_id} className="grid grid-cols-2 gap-2"><label>Порт {binding.service_id}<input type="number" min={1} max={65535} className="block w-full border rounded p-2" disabled={!!created} value={binding.host_port} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, host_port: Number(e.target.value) } : b))} /></label><label>Bind IP<input className="block w-full border rounded p-2" disabled={!!created} value={binding.bind_address || ''} onChange={(e) => setBindings(bindings.map((b, i) => i === index ? { ...b, bind_address: e.target.value } : b))} /></label></div>)}<p className="bg-amber-50 border border-amber-200 p-3 rounded">Проверьте свободные порты и доступность интерфейса на подготовленном узле. Изменение host port после запуска требует пересоздания deployment.</p>{submitError && <p role="alert" className="text-rose-700">{submitError}</p>}<div className="flex gap-2"><Button variant="outline" disabled={!!created || busy} onClick={() => setStep(0)}>Назад</Button><Button disabled={!name.trim() || new TextEncoder().encode(node.trim()).length > 253 || bindings.some((b) => !b.service_id || !Number.isInteger(b.host_port) || b.host_port < 1 || b.host_port > 65535)} isLoading={busy} onClick={create}>{created ? 'Повторить назначение профиля' : 'Создать и назначить профиль'}</Button></div></>}
       {step === 2 && created && <><p>Запись <strong>{created.name}</strong> создана. Агент ещё не зарегистрирован.</p><p className="font-mono text-xs break-all">trap_id: {created.id}</p><Button isLoading={busy} onClick={() => issueToken(created)}>Выдать одноразовый токен</Button>{token?.trapId === created.id && tokenValid && <TokenView token={token.value} expiresAt={token.expiresAt} />}{token?.trapId === created.id && !tokenValid && <p role="alert">Токен истёк. Выдайте новый; прежний будет отозван.</p>}<Button variant="outline" onClick={() => setStep(3)}>Комплект запуска</Button></>}
       {step === 3 && created && <><p>Комплект должен содержать агент, конфигурацию и инструкцию для подготовленного Linux-узла.</p><p className="font-mono text-xs">trap_id: {created.id}</p><p>После скачивания статус остаётся «Ожидает регистрации». Проверяйте регистрацию и сервис по данным сервера.</p><BundleInstructions /><Button isLoading={busy} onClick={() => downloadBundle(created)}>Скачать ZIP-комплект</Button>{bundleError && <p role="alert" className="text-rose-700">{bundleError}</p>}<Button variant="outline" onClick={closeWizard}>Закрыть</Button></>}
     </div></Modal>}
@@ -289,3 +307,15 @@ const CommandHistory: React.FC<{ commands: TrapCommand[]; error: string; loading
 };
 
 const BundleInstructions = () => <div className="space-y-2"><p>На подготовленном Linux-узле нужны Docker Compose, git, openssl и исходящий HTTPS к центру. Разрешите только опубликованные порты приманки.</p><p>Распакуйте ZIP, прочитайте README.txt и запустите <code>./install.sh</code>. Введите свежий enrollment-токен по запросу установщика. Токен в архив не включён.</p><p>После регистрации поставьте «Применить профиль» и проверьте применённую версию и состояние сервиса в карточке. Скачивание комплекта не запускает ловушку.</p></div>;
+
+const registrationReason: Record<RegistrationAttempt['reason'], string> = {
+  registered: 'Агент зарегистрирован', invalid_token: 'Неверный токен', expired_token: 'Срок токена истёк',
+  inactive_token: 'Токен уже использован или отозван', already_enrolled: 'У экземпляра уже есть агент',
+};
+const RegistrationHistory: React.FC<{ attempts: RegistrationAttempt[]; error: string }> = ({ attempts, error }) => <section className="bg-white border rounded-xl p-5 space-y-3" aria-label="История регистрации">
+  <h2 className="text-lg font-semibold">История регистрации</h2>
+  <p className="text-xs text-slate-600">Последние 100 попыток, полученных центром. Ошибки сети и TLS до обращения к API здесь не фиксируются.</p>
+  {error && <p role="alert" className="text-rose-700">{error}. Показанные записи могут быть устаревшими.</p>}
+  {!error && attempts.length === 0 && <p>Попыток регистрации пока нет.</p>}
+  <ol className="max-h-64 overflow-y-auto space-y-2">{attempts.map((attempt) => <li key={attempt.id} className="border-t pt-2 text-sm"><time>{dateText(attempt.created_at)}</time> · {attempt.outcome === 'rejected' ? 'Отказ регистрации: ' : ''}{registrationReason[attempt.reason] || attempt.reason}</li>)}</ol>
+</section>;

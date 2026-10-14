@@ -93,21 +93,33 @@ type DeploymentBinding struct {
 	HostPort    int    `json:"host_port"`
 	BindAddress string `json:"bind_address,omitempty"`
 }
+type RegistrationAttempt struct {
+	ID        string `json:"id"`
+	TrapID    string `json:"trap_id"`
+	Outcome   string `json:"outcome"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"created_at"`
+}
 type Trap struct {
-	ID                 string              `json:"id"`
-	Name               string              `json:"name"`
-	DesiredProfileID   *string             `json:"desired_profile_id"`
-	DesiredRevision    *int                `json:"desired_revision"`
-	AppliedProfileID   *string             `json:"applied_profile_id"`
-	AppliedRevision    *int                `json:"applied_revision"`
-	AgentStatus        string              `json:"agent_status"`
-	ServiceStatus      string              `json:"service_status"`
-	Telemetry          *AgentTelemetry     `json:"telemetry,omitempty"`
-	LastSeen           *string             `json:"last_seen,omitempty"`
-	DeploymentBindings []DeploymentBinding `json:"deployment_bindings"`
-	CreatedAt          string              `json:"created_at"`
+	DeploymentNode          string               `json:"deployment_node"`
+	RegistrationStatus      string               `json:"registration_status"`
+	AgentID                 *string              `json:"agent_id,omitempty"`
+	LastRegistrationAttempt *RegistrationAttempt `json:"last_registration_attempt,omitempty"`
+	ID                      string               `json:"id"`
+	Name                    string               `json:"name"`
+	DesiredProfileID        *string              `json:"desired_profile_id"`
+	DesiredRevision         *int                 `json:"desired_revision"`
+	AppliedProfileID        *string              `json:"applied_profile_id"`
+	AppliedRevision         *int                 `json:"applied_revision"`
+	AgentStatus             string               `json:"agent_status"`
+	ServiceStatus           string               `json:"service_status"`
+	Telemetry               *AgentTelemetry      `json:"telemetry,omitempty"`
+	LastSeen                *string              `json:"last_seen,omitempty"`
+	DeploymentBindings      []DeploymentBinding  `json:"deployment_bindings"`
+	CreatedAt               string               `json:"created_at"`
 }
 type CreateTrapRequest struct {
+	DeploymentNode     string              `json:"deployment_node"`
 	Name               string              `json:"name"`
 	DeploymentBindings []DeploymentBinding `json:"deployment_bindings"`
 }
