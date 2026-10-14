@@ -1,10 +1,12 @@
 FROM golang:1.27.2-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then SSL_CERT_FILE=/run/secrets/proxy_ca go mod download; else go mod download; fi
 COPY . .
 ARG HF_SOURCE_REVISION=unknown
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildRevision=${HF_SOURCE_REVISION}" -o /out/honeyforge-control ./cmd/control
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildRevision=${HF_SOURCE_REVISION}" -o /out/honeyforge-control ./cmd/control
 
 FROM alpine:3.22
 RUN addgroup -S honeyforge && adduser -S -G honeyforge honeyforge

@@ -25,6 +25,7 @@ export const StatusBadge: React.FC<{ status: TrapStatus }> = ({ status }) => {
       classes: 'bg-amber-50 text-amber-700 border-amber-200',
       dot: 'bg-amber-500',
     },
+    registration_failed: { text: 'Отказ регистрации', classes: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500' },
     unregistered: {
       text: 'Ожидает регистрации',
       classes: 'bg-rose-50 text-rose-700 border-rose-200',

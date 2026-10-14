@@ -26,6 +26,7 @@ async function setup(page) {
     else if (path === '/api/v1/traps') { state.trapReads++; body = { items: [state.trap] }; }
     else if (path === '/api/v1/profiles') body = { items: [{ id: profileId, name: 'Low profile', current_revision: 1, created_at: now, updated_at: now }] };
     else if (path.endsWith('/revisions/1')) body = { profile_id: profileId, revision: 1, config, created_at: now };
+    else if (path.endsWith('/registration-attempts')) body = { items: [] };
     else if (path.endsWith('/commands')) {
       if (state.commandError) return route.fulfill({ status: 503, json: { error: { code: 'not_ready', message: 'Команды недоступны' } } });
       body = { items: state.commands };

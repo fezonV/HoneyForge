@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"honeyforge/internal/contracts"
@@ -60,6 +62,10 @@ func (s *Server) createTrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := validateBindings(req.DeploymentBindings)
+	req.DeploymentNode = strings.TrimSpace(req.DeploymentNode)
+	if len(req.DeploymentNode) > 253 || !utf8.ValidString(req.DeploymentNode) || strings.ContainsFunc(req.DeploymentNode, unicode.IsControl) {
+		fields["deployment_node"] = "must be at most 253 UTF-8 bytes without control characters"
+	}
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 120 {
 		fields["name"] = "must be 1 to 120 characters"
 	}
@@ -76,7 +82,7 @@ func (s *Server) createTrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
-	_, err = tx.Exec(r.Context(), `INSERT INTO traps(id,name,deployment_bindings) VALUES($1,$2,$3)`, id, strings.TrimSpace(req.Name), raw)
+	_, err = tx.Exec(r.Context(), `INSERT INTO traps(id,name,deployment_bindings,deployment_node) VALUES($1,$2,$3,$4)`, id, strings.TrimSpace(req.Name), raw, req.DeploymentNode)
 	if err == nil {
 		err = auditTx(r.Context(), tx, &a.id, "trap.created", "trap", id, map[string]any{})
 	}
@@ -103,9 +109,13 @@ func readTrap(ctx context.Context, q interface {
 	var t contracts.Trap
 	var binds []byte
 	var telemetry []byte
+	var registration []byte
 	var last *time.Time
 	var created time.Time
-	err := q.QueryRow(ctx, `SELECT id::text,name,desired_profile_id::text,desired_revision,applied_profile_id::text,applied_revision,service_status,last_seen,deployment_bindings,created_at,agent_telemetry FROM traps WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&t.ID, &t.Name, &t.DesiredProfileID, &t.DesiredRevision, &t.AppliedProfileID, &t.AppliedRevision, &t.ServiceStatus, &last, &binds, &created, &telemetry)
+	err := q.QueryRow(ctx, `SELECT id::text,name,desired_profile_id::text,desired_revision,applied_profile_id::text,applied_revision,service_status,last_seen,deployment_bindings,created_at,agent_telemetry,deployment_node,
+ (SELECT id::text FROM agents WHERE trap_id=traps.id AND revoked_at IS NULL),
+ (SELECT jsonb_build_object('id',ra.id,'trap_id',ra.trap_id,'outcome',ra.outcome,'reason',ra.reason,'created_at',to_char(ra.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM registration_attempts ra WHERE ra.trap_id=traps.id ORDER BY ra.created_at DESC,ra.id DESC LIMIT 1)
+ FROM traps WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&t.ID, &t.Name, &t.DesiredProfileID, &t.DesiredRevision, &t.AppliedProfileID, &t.AppliedRevision, &t.ServiceStatus, &last, &binds, &created, &telemetry, &t.DeploymentNode, &t.AgentID, &registration)
 	if err != nil {
 		return t, err
 	}
@@ -116,6 +126,17 @@ func readTrap(ctx context.Context, q interface {
 		if err = json.Unmarshal(telemetry, &t.Telemetry); err != nil {
 			return t, err
 		}
+	}
+	if len(registration) > 0 {
+		if err = json.Unmarshal(registration, &t.LastRegistrationAttempt); err != nil {
+			return t, err
+		}
+	}
+	t.RegistrationStatus = "pending"
+	if t.AgentID != nil {
+		t.RegistrationStatus = "registered"
+	} else if t.LastRegistrationAttempt != nil && t.LastRegistrationAttempt.Outcome == "rejected" {
+		t.RegistrationStatus = "rejected"
 	}
 	if t.DeploymentBindings == nil {
 		t.DeploymentBindings = []contracts.DeploymentBinding{}
@@ -423,7 +444,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if !contracts.ValidID(req.TrapID) || len(req.Token) < 32 || len(req.Token) > 128 {
+	if !contracts.ValidID(req.TrapID) {
 		fail(w, r, 401, "enrollment_invalid", "enrollment token is invalid", nil)
 		return
 	}
@@ -446,15 +467,30 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var tokenID string
-	err = tx.QueryRow(ctx, `SELECT id::text FROM enrollment_tokens WHERE trap_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() FOR UPDATE`, req.TrapID, tokenHash(req.Token)).Scan(&tokenID)
+	var expires time.Time
+	var consumed *time.Time
+	if len(req.Token) < 32 || len(req.Token) > 128 {
+		s.rejectEnrollment(w, r, tx, req.TrapID, "invalid_token", 401)
+		return
+	}
+	err = tx.QueryRow(ctx, `SELECT id::text,expires_at,consumed_at FROM enrollment_tokens WHERE trap_id=$1 AND token_hash=$2 FOR UPDATE`, req.TrapID, tokenHash(req.Token)).Scan(&tokenID, &expires, &consumed)
 	if noRows(err) {
-		fail(w, r, 401, "enrollment_invalid", "enrollment token is invalid", nil)
+		s.rejectEnrollment(w, r, tx, req.TrapID, "invalid_token", 401)
 		return
 	}
 	if err != nil {
 		fail(w, r, 503, "not_ready", "database unavailable", nil)
 		return
 	}
+	if consumed != nil {
+		s.rejectEnrollment(w, r, tx, req.TrapID, "inactive_token", 401)
+		return
+	}
+	if !time.Now().Before(expires) {
+		s.rejectEnrollment(w, r, tx, req.TrapID, "expired_token", 401)
+		return
+	}
+
 	var enrolled bool
 	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE trap_id=$1 AND revoked_at IS NULL)`, req.TrapID).Scan(&enrolled)
 	if err != nil {
@@ -462,7 +498,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if enrolled {
-		fail(w, r, 409, "already_enrolled", "trap already has an active agent", nil)
+		s.rejectEnrollment(w, r, tx, req.TrapID, "already_enrolled", 409)
 		return
 	}
 	agentToken := randomToken(32)
@@ -478,11 +514,17 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, 503, "not_ready", "database unavailable", nil)
 		return
 	}
+	if err = recordRegistration(ctx, tx, req.TrapID, "registered", "registered"); err != nil {
+		fail(w, r, 503, "not_ready", "registration could not be stored", nil)
+		return
+	}
+
 	if err = tx.Commit(ctx); err != nil {
 		fail(w, r, 503, "not_ready", "database unavailable", nil)
 		return
 	}
 	writeJSON(w, 201, map[string]string{"agent_id": agentID, "trap_id": req.TrapID, "agent_token": agentToken})
+	s.publishNotification("trap.status_changed", req.TrapID, map[string]any{"trap_id": req.TrapID})
 }
 func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

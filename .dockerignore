@@ -15,3 +15,8 @@ examples
 tools
 archive.html
 dashboard.html
+
+**/node_modules
+**/dist
+**/test-results
+**/playwright-report
