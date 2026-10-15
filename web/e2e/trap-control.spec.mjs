@@ -133,7 +133,7 @@ test('assign v2 preserves applied v1; credential rotation creates v3 without mas
 test('offline and expired stay distinct; viewer cannot send actions', async ({ page }) => {
   const state = await setup(page, 'viewer');
   state.trap.agent_status = 'offline';
-  state.commands = [{ id: commandId, type: 'start', status: 'expired', created_at: new Date().toISOString(), expires_at: new Date().toISOString() }];
+  state.commands = [{ id: commandId, trap_id: trapId, type: 'start', status: 'expired', created_at: new Date().toISOString(), expires_at: new Date().toISOString() }];
   update(state);
   await expect(page.getByRole('region', { name: 'Карточка ловушки' })).toContainText('Агент offline');
   await expect(page.getByRole('region', { name: 'Результаты команд' })).toContainText('Команда не выполнена до истечения срока');
@@ -153,7 +153,7 @@ test('session expiry on POST returns to login and never replays the command', as
 test('incompatible service bindings block assignment; stale rotation fails without switching the trap', async ({ page }) => {
   const state = await setup(page);
   const controls = panel(page);
-  state.versions[1].config = { ...state.versions[1].config, services: [{ id: 'other', port: 18081, protocol: 'http' }] };
+  state.versions[1].config = { ...state.versions[1].config, services: [{ ...state.versions[1].config.services[0], id: 'other', port: 18081 }] };
   // Reload causes a new revision read, rather than changing cached immutable data in the UI.
   await page.reload();
   await controls.getByLabel('Версия для назначения').selectOption('2');

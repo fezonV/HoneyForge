@@ -36,14 +36,14 @@ export const Step4LoggingChannel: React.FC<Step4Props> = ({
 
   const allCategoryOptions = [
     { id: 'connection.opened', label: 'connection.opened', desc: 'Открытие TCP/HTTP соединения с портом ловушки' },
-    { id: 'http.request', label: 'http.request', desc: 'Входящий HTTP-запрос (URI, Method, Headers, User-Agent)' },
+    { id: 'http.request', label: 'http.request', desc: 'Входящий HTTP-запрос (путь и HTTP-метод)' },
     { id: 'auth.attempt', label: 'auth.attempt', desc: 'Попытка аутентификации (перехват переданных кредов)' },
     { id: 'session.started', label: 'session.started', desc: 'Старт сессии взаимодействия посетителя с приманкой' },
     { id: 'file.listed', label: 'file.listed', desc: 'Просмотр каталога или списка доступных файлов' },
     { id: 'file.read', label: 'file.read', desc: 'Чтение содержимого фиктивного документа' },
     { id: 'file.downloaded', label: 'file.downloaded', desc: 'Выгрузка файла из эмулируемого архива' },
     { id: 'session.ended', label: 'session.ended', desc: 'Завершение сессии посетителя или таймаут' },
-    { id: 'command.received', label: 'command.received', desc: 'Получение управляющей команды от центра C2 (опционально)' },
+    { id: 'command.received', label: 'command.received', desc: 'Псевдокоманда посетителя в консоли Medium' },
   ];
 
   const handleToggleCategory = (id: string) => {
@@ -80,8 +80,8 @@ export const Step4LoggingChannel: React.FC<Step4Props> = ({
           </span>
         </div>
 
-        {errors.logging && (
-          <p className="text-xs text-rose-600 font-medium">{errors.logging}</p>
+        {errors['logging.categories'] && (
+          <p className="text-xs text-rose-600 font-medium">{errors['logging.categories']}</p>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -165,14 +165,14 @@ export const Step4LoggingChannel: React.FC<Step4Props> = ({
             </label>
             <input
               type="number"
-              min={5}
-              max={600}
+              min={1}
+              max={3600}
               required
               value={channel.sync_seconds}
               onChange={(e) => setChannel({ ...channel, sync_seconds: Number(e.target.value) })}
               className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
-            <p className="text-[10px] text-slate-400 mt-1">Интервал сверки ревизии. По умолчанию: 30 с.</p>
+            <p className="text-[10px] text-slate-400 mt-1">От 1 до 3600 сек. По умолчанию: 30 с.</p>
           </div>
 
           <div>
@@ -182,11 +182,12 @@ export const Step4LoggingChannel: React.FC<Step4Props> = ({
             <label className="flex items-center gap-2 cursor-pointer mt-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
               <input
                 type="checkbox"
-                checked={channel.tls_required}
-                onChange={(e) => setChannel({ ...channel, tls_required: e.target.checked })}
+                checked={true}
+                disabled
+                aria-label="TLS обязателен"
                 className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
               />
-              <span className="text-xs text-slate-800 font-medium">Требовать TLS (mTLS)</span>
+              <span className="text-xs text-slate-800 font-medium">Требовать TLS</span>
             </label>
             <p className="text-[10px] text-slate-400 mt-1">Обязательное шифрование канала в боевом контуре.</p>
           </div>

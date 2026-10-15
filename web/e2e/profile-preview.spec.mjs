@@ -24,6 +24,7 @@ async function setup(page, config, role = 'operator') {
     const path = new URL(route.request().url()).pathname;
     let body;
     if (path === '/api/v1/auth/me') body = { id: 'preview-user', username: 'preview', role };
+    else if (path === '/api/v1/traps') body = { items: [] };
     else if (path === '/api/v1/profiles') body = { items: [{ id: profileId, name: 'Preview profile', current_revision: 3, created_at: '2026-10-14T00:00:00Z' }] };
     else if (path.endsWith('/revisions/3')) body = { profile_id: profileId, revision: 3, config };
     else return route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'Unexpected API request' } } });

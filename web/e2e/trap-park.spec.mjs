@@ -185,7 +185,7 @@ async function createTrap(page, selected, name) {
   expect((await getTrap(page, trap.id)).deployment_node).toBe(dockerNode || 'local-e2e-node');
   return { trap, token, config, artifactPath };
 }
-async function startRuntime({ trap, token, config, artifactPath }) {
+async function startRuntime({ trap, token, config, artifactPath, bindAddress = '127.0.0.1' }) {
   if (dockerNode) {
     const bundleDirectory = `/root/hf-bundle-${trap.id}`;
     dockerBundles.push(bundleDirectory);
@@ -212,13 +212,13 @@ async function startRuntime({ trap, token, config, artifactPath }) {
   const files = { 'config.json': JSON.stringify(config), enrollment: token, intake: 'test-intake-secret', admin: 'test-admin-secret' };
   for (const [name, value] of Object.entries(files)) writeFileSync(join(runtimeDir, name), value, { mode: 0o600 });
   const ipcPort = await freePort(), adminPort = await freePort();
-  const decoy = launch(join(dir, 'decoy'), ['-config', join(runtimeDir, 'config.json'), '-admin-listen', `127.0.0.1:${adminPort}`,
+  const decoy = launch(join(dir, 'decoy'), ['-config', join(runtimeDir, 'config.json'), '-bind', bindAddress, '-admin-listen', `127.0.0.1:${adminPort}`,
     '-admin-token-file', join(runtimeDir, 'admin'), '-agent-url', `http://127.0.0.1:${ipcPort}`, '-agent-token-file', join(runtimeDir, 'intake')]);
   const agent = launch(join(dir, 'agent'), ['-center', `https://127.0.0.1:${tlsServer.address().port}`, '-ca-file', join(dir, 'ca.pem'),
     '-trap', trap.id, '-enrollment-token-file', join(runtimeDir, 'enrollment'), '-state', join(runtimeDir, 'state.json'), '-queue', join(runtimeDir, 'events.sqlite'),
     '-ipc-listen', `127.0.0.1:${ipcPort}`, '-ipc-token-file', join(runtimeDir, 'intake'), '-decoy-admin', `http://127.0.0.1:${adminPort}`, '-decoy-token-file', join(runtimeDir, 'admin')]);
   try {
-    await waitFor(async () => (await fetch(`http://127.0.0.1:${config.config.services[0].port}/`, { redirect: 'manual' })).status < 500);
+    await waitFor(async () => (await fetch(`http://${bindAddress}:${config.config.services[0].port}/`, { redirect: 'manual' })).status < 500);
   } catch {
     throw new Error(`Runtime failed: decoy=${decoy.diagnostic()} agent=${agent.diagnostic()}`);
   }
@@ -371,4 +371,172 @@ test('assignment retry reuses the trap; bundle errors and token expiry stay visi
   await page.route('**/bundle', (route) => route.fulfill({ status: 503, json: { error: { code: 'bundle_unavailable', message: 'Комплект временно недоступен' } } }));
   await dialog.getByRole('button', { name: 'Скачать ZIP-комплект' }).click();
   await expect(dialog.getByRole('alert')).toContainText('Комплект временно недоступен');
+});
+
+// FE1-01/02/03 acceptance: actual form -> API -> PostgreSQL, with no API mocks.
+async function wizardProfile(page, name, level = 'medium') {
+  await page.goto('/#profiles');
+  await page.getByRole('button', { name: 'Конструктор профиля (Мастер)' }).click();
+  const wizard = page.getByRole('dialog', { name: 'Конструктор профиля поведения (Profile Wizard)' });
+  await wizard.getByPlaceholder('например: Корпоративный веб-архив Ubuntu 24.04 (Low HTTP)').fill(name);
+  if (level === 'medium') await wizard.getByRole('heading', { name: 'Medium HTTP — Служебный портал архива' }).click();
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.locator('input[type="number"]').first().fill(String(await freePort()));
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await expect(wizard.getByRole('checkbox', { name: 'TLS обязателен' })).toBeDisabled();
+  await wizard.locator('input[type="number"]').nth(0).fill('5');
+  await wizard.locator('input[type="number"]').nth(1).fill('2');
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  const response = page.waitForResponse((res) => res.url().endsWith('/api/v1/profiles') && res.request().method() === 'POST');
+  await wizard.getByRole('button', { name: 'Сохранить профиль', exact: true }).click();
+  const result = await (await response).json();
+  expect(result.profile?.id).toBeTruthy();
+  await wizard.getByRole('button', { name: 'Вернуться к каталогу' }).click();
+  return { ...result.profile, config: result.revision.config };
+}
+const profileCard = (page, name) => page.getByRole('article', { name, exact: true });
+async function editWizard(page, selected) {
+  await page.goto('/#profiles');
+  await profileCard(page, selected.name).getByTitle('Редактировать профиль (создать новую ревизию)').click();
+  return page.getByRole('dialog', { name: /Редактирование профиля:/ });
+}
+async function finishWizard(wizard) {
+  for (let i = 0; i < 4; i++) await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+}
+
+test('FE1 wizard creates Medium and copy/edit preserve credentials, files and independent instances', async ({ page }) => {
+  test.setTimeout(180000);
+  await login(page);
+  const before = (await (await page.request.get('/api/v1/traps')).json()).items.length;
+  const selected = await wizardProfile(page, `FE1 Medium ${username}`);
+  expect((await (await page.request.get('/api/v1/traps')).json()).items).toHaveLength(before);
+  expect(selected.config.fake_fs.every((file) => !file.path.startsWith('/'))).toBeTruthy();
+  expect(selected.config.synthetic_credentials.every((item) => item.password === '')).toBeTruthy();
+  await page.reload();
+  const card = profileCard(page, selected.name);
+  await card.getByTitle('Создать независимую копию профиля (v1)').click();
+  const copyCard = profileCard(page, `${Array.from(selected.name).slice(0, 24).join('')} (копия)`);
+  await expect(copyCard).toBeVisible();
+  const items = (await (await page.request.get('/api/v1/profiles?limit=100')).json()).items;
+  const copy = items.find((item) => item.name.endsWith('(копия)') && item.name.startsWith('FE1 Medium'));
+  expect(copy.id).not.toBe(selected.id);
+  expect(copy.current_revision).toBe(1);
+  const copySecret = await (await page.request.get(`/api/v1/profiles/${copy.id}/revisions/1/sensitive`)).json();
+  expect(copySecret.config.synthetic_credentials[0].password).toBe('AdminPassword2026!');
+  // Create two actual processes using one profile, and change only A to v2.
+  await page.goto('/#traps');
+  const one = await createTrap(page, selected, 'FE1 A');
+  const two = await createTrap(page, selected, 'FE1 B');
+  const a = await startRuntime(one), b = await startRuntime({ ...two, bindAddress: '127.0.0.2' });
+  const command = async (id, type, revision = 1) => {
+    const response = await page.request.post(`/api/v1/traps/${id}/commands`, { headers: await headers(page), data: { type, ttl_seconds: 60, expected_profile_id: selected.id, expected_revision: revision } });
+    expect(response.ok()).toBeTruthy();
+    const created = await response.json();
+    await expect.poll(async () => (await (await page.request.get(`/api/v1/traps/${id}/commands`)).json()).items.find((item) => item.id === created.id)?.status).toBe('applied');
+  };
+  await command(one.trap.id, 'apply_profile');
+  await command(two.trap.id, 'apply_profile');
+  const wizard = await editWizard(page, selected);
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.getByLabel('Содержимое файла 1').fill('Changed synthetic document in revision two');
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Далее', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Сохранить новую ревизию' }).click();
+  await wizard.getByRole('button', { name: 'Вернуться к каталогу' }).click();
+  const v2 = await (await page.request.get(`/api/v1/profiles/${selected.id}/revisions/2/sensitive`)).json();
+  expect(v2.config.synthetic_credentials[0].password).toBe('AdminPassword2026!');
+  const unchangedCopy = await (await page.request.get(`/api/v1/profiles/${copy.id}/revisions/1`)).json();
+  expect(unchangedCopy.config.fake_fs[0].content).toBe(selected.config.fake_fs[0].content);
+  expect((await getTrap(page, one.trap.id)).desired_revision).toBe(1);
+  expect((await getTrap(page, two.trap.id)).desired_revision).toBe(1);
+  await profileCard(page, selected.name).getByRole('button', { name: 'Предпросмотр', exact: true }).click();
+  const details = page.getByRole('dialog', { name: `Профиль: ${selected.name} (rev 2)` });
+  await details.getByRole('button', { name: /История версий/ }).click();
+  await expect(details.getByRole('table', { name: 'Различия версий профиля' })).toContainText('Changed synthetic document in revision two');
+  await details.getByRole('button', { name: 'Ревизия v1', exact: true }).click();
+  await details.getByRole('button', { name: 'Создать экземпляр (v1)', exact: true }).click();
+  const deploy = page.getByRole('dialog', { name: 'Новый экземпляр' });
+  await expect(deploy.getByLabel('Версия', { exact: true })).toHaveValue('1');
+  await deploy.getByRole('button', { name: 'Закрыть диалоговое окно' }).click();
+  expect((await page.request.put(`/api/v1/traps/${one.trap.id}/profile`, { headers: await headers(page), data: { profile_id: selected.id, revision: 2 } })).ok()).toBeTruthy();
+  await command(one.trap.id, 'apply_profile', 2);
+  expect((await getTrap(page, one.trap.id)).applied_revision).toBe(2);
+  expect((await getTrap(page, two.trap.id)).desired_revision).toBe(1);
+  for (const [host, port, content] of [['127.0.0.1', one.config.config.services[0].port, 'Changed synthetic document in revision two'], ['127.0.0.2', two.config.config.services[0].port, 'Регламент доступа']]) {
+    const visitor = await fetch(`http://${host}:${port}/login`, { method: 'POST', body: new URLSearchParams({ username: 'admin', password: 'AdminPassword2026!' }), redirect: 'manual' });
+    expect(visitor.status).toBe(303);
+    const cookie = visitor.headers.get('set-cookie').split(';')[0];
+    const file = await fetch(`http://${host}:${port}/files?path=regulations/archive-rules.txt`, { headers: { Cookie: cookie } });
+    expect(await file.text()).toContain(content);
+  }
+  await expect.poll(async () => (await (await page.request.get(`/api/v1/events?trap_id=${one.trap.id}`)).json()).items.some((event) => event.event_type === 'file.read' && event.applied_revision === 2)).toBeTruthy();
+  const timeline = await page.evaluate(async (trapId) => {
+    const { api } = await import('/src/api/client.ts');
+    const events = await api.events.page({ trap_id: trapId, event_type: 'file.read' });
+    const event = events.items.find((item) => item.session_id);
+    const detail = await api.events.detail(trapId, event.event_id);
+    const history = await api.events.timeline(event.session_id);
+    const exported = await api.events.exportCsv({ trap_id: trapId });
+    return { eventId: detail.event_id, count: history.items.length, csv: await exported.text() };
+  }, one.trap.id);
+  expect(timeline.eventId).toBeTruthy(); expect(timeline.count).toBeGreaterThan(1); expect(timeline.csv).toContain(one.trap.id);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain('AdminPassword2026!');
+  await stop(a.agent); await stop(a.decoy); await stop(b.agent); await stop(b.decoy);
+});
+
+test('FE1 concurrent editing keeps the draft and requires explicit rebase after real 409', async ({ page }) => {
+  await login(page);
+  const selected = await wizardProfile(page, `FE1 Conflict ${username}`, 'low');
+  const wizard = await editWizard(page, selected);
+  await wizard.getByPlaceholder('например: Корпоративный веб-архив Ubuntu 24.04 (Low HTTP)').fill('Local draft retained');
+  await finishWizard(wizard);
+  const update = await page.request.patch(`/api/v1/profiles/${selected.id}`, { headers: await headers(page), data: { name: 'Other editor version', description: '', base_revision: 1, config: selected.config } });
+  expect(update.ok()).toBeTruthy();
+  await wizard.getByRole('button', { name: 'Сохранить новую ревизию' }).click();
+  const conflict = page.getByRole('dialog', { name: 'Конфликт одновременного редактирования (HTTP 409)' });
+  await expect(conflict).toContainText('Ваш черновик не потерян');
+  expect((await (await page.request.get(`/api/v1/profiles/${selected.id}`)).json()).profile.current_revision).toBe(2);
+  await conflict.getByRole('button', { name: 'Вернуться к редактированию черновика' }).click();
+  await wizard.getByRole('button', { name: 'Назад', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Назад', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Назад', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Назад', exact: true }).click();
+  await expect(wizard.getByPlaceholder('например: Корпоративный веб-архив Ubuntu 24.04 (Low HTTP)')).toHaveValue('Local draft retained');
+  await finishWizard(wizard);
+  await wizard.getByRole('button', { name: 'Сохранить новую ревизию' }).click();
+  await conflict.getByRole('button', { name: 'Перенести правки' }).click();
+  await wizard.getByRole('button', { name: 'Вернуться к каталогу' }).click();
+  const final = await (await page.request.get(`/api/v1/profiles/${selected.id}`)).json();
+  expect(final.profile.name).toBe('Local draft retained');
+  expect(final.profile.current_revision).toBe(3);
+});
+
+test('FE1 occupied profile deletion is blocked, free deletion retains revision history and viewer is read-only', async ({ page, browser }) => {
+  await login(page);
+  const selected = await wizardProfile(page, `FE1 Delete ${username}`, 'low');
+  const created = await page.request.post('/api/v1/traps', { headers: await headers(page), data: { name: 'Deletion guard', deployment_bindings: [{ service_id: selected.config.services[0].id, host_port: await freePort() }] } });
+  const trap = await created.json();
+  expect((await page.request.put(`/api/v1/traps/${trap.id}/profile`, { headers: await headers(page), data: { profile_id: selected.id, revision: 1 } })).ok()).toBeTruthy();
+  await page.reload();
+  await profileCard(page, selected.name).getByTitle('Удалить профиль').click();
+  await expect(page.getByRole('dialog', { name: 'Удаление профиля заблокировано' })).toContainText('Deletion guard');
+  expect((await page.request.delete(`/api/v1/profiles/${selected.id}`, { headers: await headers(page) })).status()).toBe(409);
+  await page.getByRole('dialog').getByRole('button', { name: 'Закрыть', exact: true }).click();
+  expect((await page.request.delete(`/api/v1/traps/${trap.id}/profile`, { headers: await headers(page) })).ok()).toBeTruthy();
+  await page.reload();
+  await profileCard(page, selected.name).getByTitle('Удалить профиль').click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Удалить профиль', exact: true }).click();
+  await expect(profileCard(page, selected.name)).toHaveCount(0);
+  expect((await page.request.get(`/api/v1/profiles/${selected.id}/revisions/1`)).ok()).toBeTruthy();
+  const context = await browser.newContext();
+  const viewer = await context.newPage();
+  await login(viewer, 'viewer'); await viewer.goto('/#profiles');
+  await expect(viewer.getByRole('button', { name: 'Конструктор профиля (Мастер)' })).toHaveCount(0);
+  await expect(viewer.getByTitle('Редактировать профиль (создать новую ревизию)')).toHaveCount(0);
+  await expect(viewer.getByTitle('Создать независимую копию профиля (v1)')).toHaveCount(0);
+  expect((await viewer.request.get(`/api/v1/profiles/${selected.id}/revisions/1/sensitive`)).status()).toBe(403);
+  expect((await viewer.request.post('/api/v1/profiles', { headers: await headers(viewer), data: { name: 'Forbidden', config: selected.config } })).status()).toBe(403);
+  await context.close();
 });
