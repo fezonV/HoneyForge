@@ -140,6 +140,8 @@ try:
         time.sleep(1)
     assert connect(gateway, 29999), 'Forbidden forwarding fixture was not reachable before policy'
     assert connect(gateway, 29998), 'Forbidden host-input fixture was not reachable before policy'
+    ipc_forward_before = connect(gateway, 29999, ipc_address)
+    ipc_input_before = connect(gateway, 29998, ipc_address)
     assert connect(endpoint.hostname, endpoint.port or 443), 'Center positive control failed'
     run('exec', node, 'sh', rules)
     def policy_rules():
@@ -154,6 +156,10 @@ try:
     assert not connect(gateway, 29998), 'Forbidden host-input destination is reachable'
     assert not connect(gateway, 29999, ipc_address), 'IPC-bound socket bypasses forwarded egress policy'
     assert not connect(gateway, 29998, ipc_address), 'IPC-bound socket bypasses host-input policy'
+    if ipc_forward_before and ipc_input_before:
+        mark('IPC-bound sockets reached both forbidden fixtures before policy and are denied afterward')
+    else:
+        mark('IPC-bound probes denied after policy; pre-policy host restrictions prevent proving both bridge controls')
     assert connect(endpoint.hostname, endpoint.port or 443), 'Center blocked by policy'
     mark('IPv4 allowlist denies previously reachable FORWARD and host INPUT fixtures; center TCP remains allowed; repeated apply is idempotent')
     run('exec', node, 'sh', rules, 'remove')
