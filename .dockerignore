@@ -13,6 +13,9 @@ dist
 docs
 examples
 tools
+!tools/decoy-lab/
+!tools/decoy-lab/templates/**
+!tools/decoy-lab/assets/archive.css
 archive.html
 dashboard.html
 

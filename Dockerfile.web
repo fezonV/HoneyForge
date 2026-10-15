@@ -1,0 +1,15 @@
+FROM node:24-alpine AS build
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+COPY tools/decoy-lab/templates/ /src/tools/decoy-lab/templates/
+COPY tools/decoy-lab/assets/archive.css /src/tools/decoy-lab/assets/archive.css
+RUN npm run build && find dist -name '*.map' -delete
+
+FROM nginx:1.29-alpine
+COPY deploy/web.conf /etc/nginx/nginx.conf
+COPY --from=build /src/web/dist /usr/share/nginx/html
+USER 101:101
+EXPOSE 8080
+ENTRYPOINT ["nginx", "-g", "daemon off;"]

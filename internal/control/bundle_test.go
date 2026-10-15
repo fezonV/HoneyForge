@@ -37,16 +37,21 @@ func TestRenderTrapBundleSeparatesEnrollmentSecret(t *testing.T) {
 			t.Fatalf("read %s: %v", file.Name, readErr)
 		}
 		files[file.Name] = data
-		if file.Name == "install.sh" && file.Mode().Perm() != 0755 {
-			t.Fatalf("install.sh mode = %o, want 755", file.Mode().Perm())
+		if (file.Name == "install.sh" || file.Name == "restrict-egress.sh") && file.Mode().Perm() != 0755 {
+			t.Fatalf("%s mode = %o, want 755", file.Name, file.Mode().Perm())
 		}
 	}
-	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "manifest.json", "install.sh", "README.txt"} {
+	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "manifest.json", "install.sh", "restrict-egress.sh", "README.txt"} {
 		if _, ok := files[name]; !ok {
 			t.Errorf("bundle is missing %s", name)
 		}
 	}
 	var manifest bundleManifest
+	if strings.Contains(string(files["restrict-egress.sh"]), "@@HOST@@") ||
+		!strings.Contains(string(files["restrict-egress.sh"]), "host='center.example.org'") ||
+		!strings.Contains(string(files["restrict-egress.sh"]), "port='9443'") {
+		t.Fatal("egress policy does not use the configured center endpoint")
+	}
 	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil || manifest.DeploymentNode != "linux-node-02" {
 		t.Fatalf("bundle target node not preserved: node=%q err=%v", manifest.DeploymentNode, err)
 	}
