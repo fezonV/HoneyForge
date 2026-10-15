@@ -33,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'profiles', label: 'Профили', icon: <Layers className="w-4 h-4" /> },
     { id: 'traps', label: 'Ловушки', icon: <Radio className="w-4 h-4" /> },
     { id: 'events', label: 'События', icon: <FileText className="w-4 h-4" /> },
-    { id: 'audit', label: 'Аудит', icon: <UserCheck className="w-4 h-4" /> },
+    ...(role === 'operator' ? [{ id: 'audit' as const, label: 'Аудит', icon: <UserCheck className="w-4 h-4" /> }] : []),
   ];
 
   return (

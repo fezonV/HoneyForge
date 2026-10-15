@@ -21,6 +21,9 @@ import {
   StoredEvent,
   EventFilters,
   SessionTimeline,
+  EventSummary,
+  AuditFilters,
+  StoredAuditEntry,
 } from './types';
 import {
   FIXTURE_OPERATOR,
@@ -740,14 +743,14 @@ export const api = {
       const page = await request<Page<RegistrationAttempt>>(`/api/v1/traps/${encodeURIComponent(trapId)}/registration-attempts?limit=100`);
       return page.items || [];
     },
-    async commands(trapId: string): Promise<TrapCommand[]> {
+    async commands(trapId: string, signal?: AbortSignal): Promise<TrapCommand[]> {
       if (isDevModeActive()) return [];
       const items: TrapCommand[] = [];
       let cursor = '';
       do {
         const params = new URLSearchParams({ limit: '100' });
         if (cursor) params.set('cursor', cursor);
-        const page = await request<Page<TrapCommand>>(`/api/v1/traps/${encodeURIComponent(trapId)}/commands?${params}`);
+        const page = await request<Page<TrapCommand>>(`/api/v1/traps/${encodeURIComponent(trapId)}/commands?${params}`, { signal });
         items.push(...(page.items || []));
         cursor = page.next_cursor || '';
       } while (cursor);
@@ -763,7 +766,7 @@ export const api = {
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
-    async list(): Promise<Trap[]> {
+    async list(signal?: AbortSignal): Promise<Trap[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));
         return [...mockTraps];
@@ -774,7 +777,7 @@ export const api = {
       do {
         const params = new URLSearchParams({ limit: '100' });
         if (cursor) params.set('cursor', cursor);
-        const page = await request<Page<any>>(`/api/v1/traps?${params}`);
+        const page = await request<Page<any>>(`/api/v1/traps?${params}`, { signal });
         items.push(...(page.items || []));
         cursor = page.next_cursor || '';
       } while (cursor);
@@ -888,6 +891,9 @@ export const api = {
   },
 
   events: {
+    async summary(filters: EventFilters, signal?: AbortSignal): Promise<EventSummary> {
+      return request<EventSummary>(`/api/v1/events/summary?${eventQuery(filters)}`, { signal });
+    },
     async page(filters: EventFilters = {}, signal?: AbortSignal): Promise<Page<StoredEvent>> {
       return request<Page<StoredEvent>>(`/api/v1/events?${eventQuery(filters)}`, { signal });
     },
@@ -903,8 +909,9 @@ export const api = {
       }
       return result;
     },
-    async exportCsv(filters: EventFilters = {}): Promise<Blob> {
-      return request<Blob>(`/api/v1/events/export.csv?${eventQuery(filters)}`, {}, 30000, 'csv');
+    async exportCsv(filters: EventFilters = {}, signal?: AbortSignal): Promise<Blob> {
+      const selection = Object.fromEntries(Object.entries(filters).filter(([key]) => key !== 'cursor' && key !== 'limit'));
+      return request<Blob>(`/api/v1/events/export.csv?${eventQuery({ ...selection, limit: 10000 })}`, { signal }, 30000, 'csv');
     },
     async list(params: { limit?: number; trap_id?: string; severity?: string } = {}): Promise<AttackEvent[]> {
       if (isDevModeActive()) {
@@ -937,6 +944,11 @@ export const api = {
   },
 
   audit: {
+    async page(filters: AuditFilters = {}, signal?: AbortSignal): Promise<Page<StoredAuditEntry>> {
+      const query = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+      return request<Page<StoredAuditEntry>>(`/api/v1/audit?${query}`, { signal });
+    },
     async list(): Promise<AuditLogEntry[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));

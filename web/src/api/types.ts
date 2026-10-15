@@ -306,3 +306,17 @@ export interface SessionTimeline {
   items: StoredEvent[];
   next_cursor?: string;
 }
+
+export interface EventSummary {
+  from: string;
+  to: string;
+  total_events: number;
+  unique_sources: number;
+  by_event_type: { event_type: string; count: number }[];
+  top_sources: { source_ip: string; count: number; source_country_code?: string; source_country_name?: string; source_asn?: number; source_asn_org?: string }[];
+}
+export interface AuditFilters { action?: string; actor_id?: string; from?: string; to?: string; cursor?: string; limit?: number }
+export interface StoredAuditEntry {
+  id: string; created_at: string; actor_id?: string | null; action: string;
+  entity_type: string; entity_id?: string; details: Record<string, unknown>;
+}
