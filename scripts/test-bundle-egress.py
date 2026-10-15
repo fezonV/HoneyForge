@@ -34,7 +34,6 @@ getent() {
         *) return 1 ;;
     esac
 }
-iptables-restore() { cat > restored; }
 iptables() {
     shift 2 # -w 5
     operation=$1; shift
@@ -60,12 +59,21 @@ class BundleEgressTest(unittest.TestCase):
         script = SCRIPT.read_text().replace('@@HOST@@', "'center.example.org'").replace('@@PORT@@', "'9443'")
         (self.directory / 'restrict-egress.sh').write_text(script, newline='\n')
         (self.directory / 'fixture.sh').write_text(FIXTURES, newline='\n')
+        # A separate executable also works with dash, which rejects hyphens in
+        # shell function names even though command names may contain them.
+        bin_dir = self.directory / 'bin'
+        bin_dir.mkdir()
+        restore = bin_dir / 'iptables-restore'
+        restore.write_text('#!/bin/sh\ncat > restored\n', newline='\n')
+        restore.chmod(0o755)
 
     def run_policy(self, action='apply', bridge=''):
         shell = os.environ.get('HF_TEST_SH') or shutil.which('sh')
         self.assertTrue(shell, 'A POSIX shell is required')
         result = subprocess.run([shell, 'fixture.sh', action], cwd=self.directory,
-                                env={**os.environ, 'CUSTOM_BRIDGE': bridge}, capture_output=True, text=True)
+                                env={**os.environ, 'CUSTOM_BRIDGE': bridge,
+                                     'PATH': str(self.directory / 'bin') + os.pathsep + os.environ['PATH']},
+                                capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_dual_stack_resolution_and_bridge_rules_are_idempotent(self):
