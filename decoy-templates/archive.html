@@ -1,24 +1,127 @@
 <!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}}</title><link rel="stylesheet" href="/assets/archive.css"></head>
-<body><div class="archive">
-<header class="archive-header"><div class="archive-identity"><span class="archive-mark" aria-hidden="true">А</span><strong>{{.Title}}</strong></div><span class="service-name">{{.Service}}</span>{{if .SignedIn}}<form method="post" action="/logout"><button class="quiet-button">Выйти</button></form>{{end}}</header>
-<main class="archive-main">
-{{if eq .State "login"}}
-<section class="login-panel"><h1>{{.Title}}</h1><p class="description">{{.Banner}}</p><h2>{{.Prompt}}</h2>{{if .Message}}<p class="login-message" role="alert">{{.Message}}</p>{{end}}
-<form method="post" action="/login"><label for="archive-username">Имя пользователя</label><input id="archive-username" name="username" autocomplete="username" maxlength="128" required><label for="archive-password">Пароль</label><input id="archive-password" name="password" type="password" autocomplete="current-password" maxlength="256" required><button class="primary-button">Войти</button></form></section>
-{{else}}
-<h1>{{.Title}}</h1><p class="description">{{.Banner}}</p>
-{{if .SignedIn}}<nav class="archive-actions" aria-label="Архив"><a class="quiet-button" href="/files">Каталог</a><a class="quiet-button" href="/console">Консоль</a></nav>{{end}}
-{{if eq .State "catalog"}}
-{{if .Documents}}<section class="document-group"><div class="group-heading"><h2>Документы</h2><span class="count">{{len .Documents}} док.</span></div>
-{{range .Documents}}<div class="document-row"><span class="file-type">TXT</span><div class="document-name"><a class="file-button" href="{{.URL}}">{{.Path}}</a><span class="file-path">{{.Path}}</span></div><span class="file-size">{{.Size}} Б</span></div>{{end}}</section>
-{{else}}<section class="empty-state"><span class="empty-mark">—</span><h2>Архив пока пуст</h2><p>Документы появятся после публикации архивной службой.</p></section>{{end}}
-{{else if eq .State "file"}}
-<article class="file-view"><p class="view-path">{{.Path}}</p><h2>{{.Path}}</h2><p><a class="quiet-button" href="{{.DownloadURL}}">Скачать документ</a></p><pre class="file-body">{{.Body}}</pre></article>
-{{else if eq .State "console"}}
-<section class="file-view"><h2>Консоль архива</h2><p class="description">Доступные команды: pwd, ls, cat &lt;путь&gt;.</p><form method="post" action="/console"><label for="archive-command">Команда</label><input id="archive-command" name="command" maxlength="1024" required><button class="primary-button">Выполнить</button></form>{{if .Output}}<pre class="file-body" aria-live="polite">{{.Output}}</pre>{{end}}</section>
-{{else}}<section class="empty-state"><span class="empty-mark">—</span><h2>{{.Message}}</h2><p>{{if eq .State "unavailable"}}Эта копия архива публикует только каталог. Обратитесь в архивную службу за содержимым.{{else if eq .State "stopped"}}Повторите обращение позднее.{{else}}Материал отсутствует в каталоге или был перемещён.{{end}}</p><a class="primary-button" href="/">Вернуться в каталог</a></section>{{end}}
-{{end}}
-</main><footer class="archive-footer">Архивная служба · {{.Service}}</footer>
-</div></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/archive.css">
+</head>
+<body>
+<div class="archive">
+  <header class="archive-header">
+    <div class="archive-identity">
+      <span class="archive-mark" aria-hidden="true">А</span>
+      <strong>{{.Title}}</strong>
+    </div>
+    <span class="service-name">{{.Service}}</span>
+    {{if .SignedIn}}
+    <form method="post" action="/logout" class="logout-form">
+      <button class="quiet-button" type="submit">Выйти</button>
+    </form>
+    {{end}}
+  </header>
+
+  <main class="archive-main">
+  {{if eq .State "login"}}
+    <section class="login-panel">
+      <h1>{{.Title}}</h1>
+      {{if .Banner}}<p class="description">{{.Banner}}</p>{{end}}
+      <h2>{{.Prompt}}</h2>
+      {{if .Message}}
+      <p class="login-message" role="alert">{{.Message}}</p>
+      {{end}}
+      <form method="post" action="/login">
+        <label for="archive-username">Имя пользователя</label>
+        <input id="archive-username" name="username" autocomplete="username" maxlength="128" placeholder="Имя пользователя" required>
+        <label for="archive-password">Пароль</label>
+        <input id="archive-password" name="password" type="password" autocomplete="current-password" maxlength="256" placeholder="Пароль" required>
+        <button class="primary-button" type="submit">Войти</button>
+      </form>
+    </section>
+
+  {{else}}
+    <h1>{{.Title}}</h1>
+    {{if .Banner}}<p class="description">{{.Banner}}</p>{{end}}
+
+    {{if .SignedIn}}
+    <nav class="archive-actions" aria-label="Архив">
+      <a class="quiet-button" href="/files">Каталог</a>
+      <a class="quiet-button" href="/console">Консоль</a>
+    </nav>
+    {{end}}
+
+    {{if eq .State "catalog"}}
+      {{if .Documents}}
+      <section class="document-group">
+        <div class="group-heading">
+          <h2>Документы</h2>
+          <span class="count">{{len .Documents}} док.</span>
+        </div>
+        {{range .Documents}}
+        <div class="document-row">
+          <span class="file-type">TXT</span>
+          <div class="document-name">
+            <a class="file-button" href="{{.URL}}">{{.Path}}</a>
+            <span class="file-path">{{.Path}}</span>
+          </div>
+          <span class="file-size">{{.Size}} Б</span>
+        </div>
+        {{end}}
+      </section>
+      {{else}}
+      <section class="empty-state">
+        <span class="empty-mark" aria-hidden="true">—</span>
+        <h2>Архив пока пуст</h2>
+        <p>Документы появятся после публикации архивной службой.</p>
+      </section>
+      {{end}}
+
+    {{else if eq .State "file"}}
+      <article class="file-view">
+        <p class="file-actions-top"><a class="quiet-button" href="/files">К списку файлов</a></p>
+        <p class="view-path">{{.Path}}</p>
+        <h2>{{.Path}}</h2>
+        <p class="file-meta">TXT · {{.Size}} Б</p>
+        <p class="file-actions"><a class="quiet-button" href="{{.DownloadURL}}">Скачать документ</a></p>
+        <pre class="file-body">{{.Body}}</pre>
+      </article>
+
+    {{else if eq .State "console"}}
+      <section class="file-view">
+        <h2>Консоль архива</h2>
+        <p class="description">Доступные команды: pwd, ls, cat &lt;путь&gt;.</p>
+        <form method="post" action="/console" class="console-form">
+          <label for="archive-command">Команда</label>
+          <div class="console-input-row">
+            <input id="archive-command" name="command" autocomplete="off" spellcheck="false" placeholder="Например: ls или cat /regulations/archive-rules.txt" maxlength="1024" required>
+            <button class="primary-button" type="submit">Выполнить</button>
+          </div>
+        </form>
+        {{if .Output}}
+        <div class="console-output">
+          <div class="console-output-header">Вывод терминала:</div>
+          <pre class="file-body console-pre" aria-live="polite">{{.Output}}</pre>
+        </div>
+        {{end}}
+      </section>
+
+    {{else}}
+      <section class="empty-state">
+        <span class="empty-mark" aria-hidden="true">—</span>
+        <h2>{{.Message}}</h2>
+        <p>
+          {{if eq .State "unavailable"}}Эта копия архива публикует только каталог. Обратитесь в архивную службу за содержимым.
+          {{else if eq .State "stopped"}}Повторите обращение позднее.
+          {{else}}Материал отсутствует в каталоге или был перемещён.{{end}}
+        </p>
+        <a class="primary-button" href="/">Вернуться в каталог</a>
+      </section>
+    {{end}}
+  {{end}}
+  </main>
+
+  <footer class="archive-footer">Архивная служба · {{.Service}}</footer>
+</div>
+</body>
+</html>
