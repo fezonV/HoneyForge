@@ -2,5 +2,10 @@
 /docs/HONEYFORGE_PLAN.md
 /geoip/
 /deploy/secrets/
-/.env
 /deploy/.env
+
+# Disposable QA evidence stays outside source control.
+/qa-*.log
+/qa-*.jsonl
+__pycache__/
+.env

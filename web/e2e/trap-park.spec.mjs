@@ -7,9 +7,10 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
+import pg from 'pg';
 
 // Deliberately requires a separate disposable database. No API or agent mocks.
-test.skip(!process.env.TEST_DATABASE_URL, 'Set TEST_DATABASE_URL to a disposable PostgreSQL database');
+if (!process.env.TEST_DATABASE_URL) throw new Error('Set TEST_DATABASE_URL to a disposable PostgreSQL database; live acceptance cannot be skipped');
 const root = resolve(import.meta.dirname, '../..');
 const dockerNode = process.env.HF_BUNDLE_DOCKER_NODE;
 const agentHost = dockerNode ? execFileSync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim() : '127.0.0.1';
@@ -45,6 +46,7 @@ const run = (command, args) => new Promise((done, reject) => {
 const username = `fe2_${Date.now()}`;
 const password = 'Local-e2e-only-password!';
 let dir, tlsServer, center;
+let database, schema;
 const children = [];
 
 const freePort = async () => {
@@ -86,10 +88,16 @@ const stop = async (child) => {
 
 test.beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'honeyforge-fe2-'));
+  database = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
+  await database.connect();
+  schema = `qa_live_${process.pid}_${Date.now()}`;
+  await database.query(`CREATE SCHEMA "${schema}"`);
+  const isolatedDSN = new URL(process.env.TEST_DATABASE_URL);
+  isolatedDSN.searchParams.set('search_path', schema);
   for (const component of ['control', 'agent', 'decoy']) {
     execFileSync('go', ['build', '-o', join(dir, component), `./cmd/${component}`], { cwd: root });
   }
-  const env = { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL,
+  const env = { ...process.env, DATABASE_URL: isolatedDSN.toString(),
     PUBLIC_ORIGIN: 'http://127.0.0.1:5173', COOKIE_SECURE: 'false', LISTEN_ADDR: '127.0.0.1:8081' };
   for (const role of ['operator', 'viewer']) {
     execFileSync(join(dir, 'control'), ['-create-user'], {
@@ -125,6 +133,10 @@ test.afterAll(async () => {
   }
   await Promise.all(children.map(stop));
   if (tlsServer) { tlsServer.closeAllConnections(); await new Promise((done) => tlsServer.close(done)); }
+  if (database) {
+    try { if (schema) await database.query(`DROP SCHEMA "${schema}" CASCADE`); }
+    finally { await database.end(); }
+  }
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
