@@ -22,6 +22,21 @@ merged. The generic facade interception pattern from #36 is attributed in the
 security fix commit; enrollment-specific handling and authenticated error
 preservation are independently checked here.
 
+## Final integration evidence
+
+PR #38 merged into dev as `e3ebcef68d8e2e18d3b842d881616235a01ad90a`.
+Tested head `b02e0a4a4738e056b13d38b2a3d8bd13a9d87422` passed **all five jobs**
+in [run 38727165676](https://github.com/fezonV/HoneyForge/actions/runs/38727165676).
+Its Git tree equals the merge tree. All four original PRs are marked merged;
+#14 is closed with its evidence, #4/#12/#13/#15/#16/#17 remain open with updated
+criteria and explanations. This follow-up synchronizes existing status documents
+and changes no runtime/test/CI source.
+
+Downloaded final-head artifacts independently confirm 122 passing Go tests,
+zero test skips, the actual stopped-PostgreSQL/replay/timeline checks and all
+local facade/segment checks. Final-head load: 3000 actions / 60.005s / 50.00/s,
+committed-event p95 **58ms**; final UI latency is still not measured.
+
 ## Environment and isolation
 
 Local: disposable Debian 13 linux/amd64 managed container, 3 CPUs, 8 GiB cgroup
