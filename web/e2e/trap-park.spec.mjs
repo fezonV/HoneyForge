@@ -8,6 +8,7 @@ import https from 'node:https';
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
+import { randomUUID } from 'node:crypto';
 
 // Deliberately requires a separate disposable database. No API or agent mocks.
 if (!process.env.TEST_DATABASE_URL) throw new Error('Set TEST_DATABASE_URL to a disposable PostgreSQL database; live acceptance cannot be skipped');
@@ -48,6 +49,7 @@ const password = 'Local-e2e-only-password!';
 let dir, tlsServer, center;
 let database, schema;
 const children = [];
+const binaryPath = (component) => join(dir, `${component}${process.platform === 'win32' ? '.exe' : ''}`);
 
 const freePort = async () => {
   const server = net.createServer();
@@ -95,12 +97,12 @@ test.beforeAll(async () => {
   const isolatedDSN = new URL(process.env.TEST_DATABASE_URL);
   isolatedDSN.searchParams.set('search_path', schema);
   for (const component of ['control', 'agent', 'decoy']) {
-    execFileSync('go', ['build', '-o', join(dir, component), `./cmd/${component}`], { cwd: root });
+    execFileSync('go', ['build', '-o', binaryPath(component), `./cmd/${component}`], { cwd: root });
   }
   const env = { ...process.env, DATABASE_URL: isolatedDSN.toString(),
     PUBLIC_ORIGIN: 'http://127.0.0.1:5173', COOKIE_SECURE: 'false', LISTEN_ADDR: '127.0.0.1:8081' };
   for (const role of ['operator', 'viewer']) {
-    execFileSync(join(dir, 'control'), ['-create-user'], {
+    execFileSync(binaryPath('control'), ['-create-user'], {
       env: { ...env, HF_USERNAME: `${username}_${role}`, HF_PASSWORD: password, HF_ROLE: role },
       stdio: 'pipe',
     });
@@ -116,7 +118,7 @@ test.beforeAll(async () => {
     req.pipe(upstream);
   });
   await new Promise((done) => tlsServer.listen(0, dockerNode ? '0.0.0.0' : '127.0.0.1', done));
-  center = launch(join(dir, 'control'), [], { ...env,
+  center = launch(binaryPath('control'), [], { ...env,
     AGENT_ORIGIN: `https://${agentHost}:${tlsServer.address().port}`,
     HF_SOURCE_REVISION: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   });
@@ -188,7 +190,7 @@ async function createTrap(page, selected, name) {
   const download = page.waitForEvent('download');
   await dialog.getByRole('button', { name: 'Скачать ZIP-комплект' }).click();
   const artifact = await download;
-  const config = JSON.parse(execFileSync('python3', ['-c', 'import sys,zipfile; print(zipfile.ZipFile(sys.argv[1]).read("decoy-config.json").decode())', await artifact.path()], { encoding: 'utf8' }));
+  const config = JSON.parse(execFileSync(process.env.HF_TEST_PYTHON || 'python3', ['-X', 'utf8', '-c', 'import sys,zipfile; print(zipfile.ZipFile(sys.argv[1]).read("decoy-config.json").decode())', await artifact.path()], { encoding: 'utf8' }));
   expect(config.trap_id).toBe(trap.id);
   expect(config.profile_id).toBe(selected.id);
   await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -224,9 +226,9 @@ async function startRuntime({ trap, token, config, artifactPath, bindAddress = '
   const files = { 'config.json': JSON.stringify(config), enrollment: token, intake: 'test-intake-secret', admin: 'test-admin-secret' };
   for (const [name, value] of Object.entries(files)) writeFileSync(join(runtimeDir, name), value, { mode: 0o600 });
   const ipcPort = await freePort(), adminPort = await freePort();
-  const decoy = launch(join(dir, 'decoy'), ['-config', join(runtimeDir, 'config.json'), '-bind', bindAddress, '-admin-listen', `127.0.0.1:${adminPort}`,
+  const decoy = launch(binaryPath('decoy'), ['-config', join(runtimeDir, 'config.json'), '-bind', bindAddress, '-admin-listen', `127.0.0.1:${adminPort}`,
     '-admin-token-file', join(runtimeDir, 'admin'), '-agent-url', `http://127.0.0.1:${ipcPort}`, '-agent-token-file', join(runtimeDir, 'intake')]);
-  const agent = launch(join(dir, 'agent'), ['-center', `https://127.0.0.1:${tlsServer.address().port}`, '-ca-file', join(dir, 'ca.pem'),
+  const agent = launch(binaryPath('agent'), ['-center', `https://127.0.0.1:${tlsServer.address().port}`, '-ca-file', join(dir, 'ca.pem'),
     '-trap', trap.id, '-enrollment-token-file', join(runtimeDir, 'enrollment'), '-state', join(runtimeDir, 'state.json'), '-queue', join(runtimeDir, 'events.sqlite'),
     '-ipc-listen', `127.0.0.1:${ipcPort}`, '-ipc-token-file', join(runtimeDir, 'intake'), '-decoy-admin', `http://127.0.0.1:${adminPort}`, '-decoy-token-file', join(runtimeDir, 'admin')]);
   try {
@@ -239,6 +241,7 @@ async function startRuntime({ trap, token, config, artifactPath, bindAddress = '
 const getTrap = async (page, id) => (await page.request.get(`/api/v1/traps/${id}`)).json();
 
 test('real Low/Medium creation, bundles, agents, applied revision, stopped and offline', async ({ page, browser }) => {
+  test.setTimeout(180000);
   if (dockerNode) test.setTimeout(900000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -263,8 +266,16 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect(card).toBeVisible();
   await controls.getByRole('button', { name: 'Применить профиль', exact: true }).click();
   await page.getByRole('button', { name: 'Подтвердить применить профиль' }).click();
-  await expect.poll(async () => (await getTrap(page, two.trap.id)).applied_revision).toBe(1);
+  try {
+    await expect.poll(async () => (await getTrap(page, two.trap.id)).applied_revision).toBe(1);
+  } catch (error) {
+    const commands = await (await page.request.get(`/api/v1/traps/${two.trap.id}/commands`)).json();
+    throw new Error(`${error.message}; commands=${JSON.stringify(commands)}; agent=${mediumRuntime.agent.diagnostic?.()}; decoy=${mediumRuntime.decoy.diagnostic?.()}`);
+  }
   await expect(card).toContainText('Сервис работает');
+  const journal = await page.context().newPage();
+  await journal.goto(`/#events?trap_id=${two.trap.id}`);
+  await expect(journal.getByRole('heading', { name: 'Журнал событий атак' })).toBeVisible();
   const visitor = await browser.newContext();
   const visit = await visitor.newPage();
   const publicURL = await visitorURL(medium.config.services[0].port);
@@ -280,7 +291,37 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect(visit.locator('pre')).toContainText('Synthetic report from applied profile');
   await visit.getByRole('button', { name: 'Выйти' }).click();
   await visitor.close();
-  await expect.poll(async () => (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items.some((event) => event.event_type === 'command.received')).toBe(true);
+  await expect.poll(async () => {
+    const items = (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items;
+    return items.some((event) => event.event_type === 'command.received') && items.some((event) => event.event_type === 'session.ended');
+  }).toBe(true);
+  // The real decoy's telemetry must reach the already-open UI through WS + REST.
+  await expect(journal.getByRole('table').getByText('command.received', { exact: true })).toBeVisible({ timeout: 15000 });
+  const realEvents = (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items;
+  const commandEvent = realEvents.find((event) => event.event_type === 'command.received');
+  await journal.getByRole('button', { name: `Открыть событие ${commandEvent.event_id}`, exact: true }).click();
+  const eventDetails = journal.getByRole('dialog', { name: 'Детали события' });
+  await expect(eventDetails).toContainText(two.trap.id);
+  await expect(eventDetails).toContainText('Историческая revision');
+  await expect(eventDetails.locator('pre')).toHaveCount(0);
+  await eventDetails.getByRole('button', { name: 'Открыть timeline сессии' }).click();
+  const timeline = journal.getByRole('dialog', { name: 'Timeline сессии' });
+  await expect(timeline.getByText('auth.attempt', { exact: true })).toBeVisible();
+  await expect(timeline.getByText('file.read', { exact: true })).toBeVisible();
+  await expect(timeline.getByText('command.received', { exact: true })).toBeVisible();
+  const sessionEvents = realEvents.filter((event) => event.session_id === commandEvent.session_id);
+  const rows = timeline.locator('tbody tr');
+  await expect(rows).toHaveCount(sessionEvents.length);
+  expect(await rows.allTextContents()).toEqual(expect.arrayContaining([expect.stringContaining(two.trap.id)]));
+  await timeline.getByRole('button', { name: 'Закрыть диалоговое окно', exact: true }).click();
+  await journal.goto(`/#events?trap_id=${one.trap.id}`);
+  await fetch(await visitorURL(low.config.services[0].port));
+  await expect(journal.getByRole('table').getByText('http.request', { exact: true }).first()).toBeVisible({ timeout: 15000 });
+  for (const row of await journal.locator('tbody tr').allTextContents()) {
+    expect(row).toContain(one.trap.id);
+    expect(row).not.toContain(two.trap.id);
+  }
+  await journal.close();
   if (dockerNode) {
     const events = (await (await page.request.get(`/api/v1/events?trap_id=${two.trap.id}`)).json()).items;
     // PostgreSQL inet serialization can include the host mask (/32 or /128).
@@ -336,6 +377,52 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await expect(page.getByRole('table')).toBeVisible();
   expect(errors).toEqual([]);
   await stop(lowRuntime.agent);
+});
+
+test('FE2-03 PostgreSQL history beyond 100 combines all filters and audits explicit sensitive reads', async ({ page, browser }, testInfo) => {
+  await login(page);
+  const selected = await profile(page, 'medium');
+  const created = await page.request.post('/api/v1/traps', { headers: await headers(page), data: { name: 'Historical query fixture', deployment_bindings: [] } });
+  expect(created.ok()).toBeTruthy();
+  const trap = await created.json(), agentId = randomUUID(), sessionId = randomUUID();
+  // Stored historical fixtures exercise the real query path; live visitor telemetry is tested above.
+  await database.query(`INSERT INTO "${schema}".agents(id,trap_id,token_hash) VALUES($1,$2,$3)`, [agentId, trap.id, Buffer.from(randomUUID())]);
+  await database.query(`INSERT INTO "${schema}".visitor_sessions(id,trap_id,started_at) VALUES($1,$2,'2026-01-01T00:00:00Z')`, [sessionId, trap.id]);
+  await database.query(`INSERT INTO "${schema}".events(id,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload)
+    SELECT gen_random_uuid(),$2::uuid,$3::uuid,'web',$1::uuid,$4::uuid,1,'file.read', '2026-01-01T00:00:00Z'::timestamptz + i * interval '1 second','198.51.100.82'::inet,42100,18080,'http',
+    '{"password":"historical-sensitive-only","path":"<script>window.pwned=1</script>"}'::jsonb FROM generate_series(0,129) AS i`, [sessionId, trap.id, agentId, selected.id]);
+  const query = new URLSearchParams({ trap_id: trap.id, from: '2026-01-01T00:00:00Z', to: '2026-01-01T00:03:00Z', source_ip: '198.51.100.82', event_type: 'file.read', session_id: sessionId });
+  await page.goto(`/#events?${query}`);
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  await page.getByRole('button', { name: 'Более ранние события' }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  await page.getByRole('button', { name: 'Более ранние события' }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(30);
+  await page.reload();
+  await expect(page.locator('tbody tr')).toHaveCount(30);
+  await page.screenshot({ path: testInfo.outputPath('events-postgres.png'), fullPage: true });
+  const detailButton = page.locator('tbody tr').first().getByRole('button');
+  const eventId = (await detailButton.getAttribute('aria-label')).replace('Открыть событие ', '');
+  const endpoint = `/api/v1/traps/${trap.id}/events/${eventId}`;
+  const metadata = await (await page.request.get(endpoint)).text();
+  expect(metadata).not.toContain('historical-sensitive-only');
+  await detailButton.click();
+  const detail = page.getByRole('dialog', { name: 'Детали события' });
+  await expect(detail.locator('pre')).toHaveCount(0);
+  await detail.getByRole('button', { name: 'Запросить payload с аудитом' }).click();
+  await expect(detail.locator('pre')).toContainText('historical-sensitive-only');
+  expect(await page.evaluate(() => window.pwned)).toBeUndefined();
+  const audit = await database.query(`SELECT count(*) FROM "${schema}".audit_log WHERE action='event.sensitive_read' AND entity_id=$1`, [`${trap.id}/${eventId}`]);
+  expect(Number(audit.rows[0].count)).toBe(1);
+  const viewer = await browser.newContext();
+  const readOnly = await viewer.newPage();
+  await login(readOnly, 'viewer');
+  await readOnly.goto(`/#events?${query}&event_id=${eventId}&event_trap=${trap.id}`);
+  await expect(readOnly.getByRole('dialog', { name: 'Детали события' })).toBeVisible();
+  await expect(readOnly.getByRole('button', { name: 'Запросить payload с аудитом' })).toHaveCount(0);
+  expect((await readOnly.request.get(`${endpoint}/sensitive`)).status()).toBe(403);
+  expect(await (await readOnly.request.get(endpoint)).text()).not.toContain('historical-sensitive-only');
+  await viewer.close();
 });
 
 test('viewer has read-only UI and direct API denies enrollment and bundle', async ({ page }) => {
