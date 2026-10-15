@@ -2,3 +2,5 @@
 /docs/HONEYFORGE_PLAN.md
 /geoip/
 /deploy/secrets/
+/.env
+/deploy/.env
