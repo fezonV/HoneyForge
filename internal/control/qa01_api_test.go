@@ -1,10 +1,12 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,6 +56,38 @@ func TestQA01ProfileAuthorizationValidationAndRevisionIsolation(t *testing.T) {
 	if w := op.request(http.MethodPost, "/api/v1/profiles", `{"name":"unknown","description":"","config":{},"unexpected":true}`, true, true); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown request field status=%d body=%s", w.Code, w.Body.String())
 	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*contracts.ProfileConfig)
+	}{
+		{"unsupported-high", func(c *contracts.ProfileConfig) { c.Level = "high" }},
+		{"empty-services", func(c *contracts.ProfileConfig) { c.Services = nil }},
+		{"invalid-port", func(c *contracts.ProfileConfig) { c.Services[0].Port = 0 }},
+		{"banner-limit", func(c *contracts.ProfileConfig) { c.Services[0].Banner = strings.Repeat("x", 10000) }},
+		{"credential-limit", func(c *contracts.ProfileConfig) { c.SyntheticCredentials[0].Password = strings.Repeat("x", 10000) }},
+		{"unknown-logging", func(c *contracts.ProfileConfig) { c.Logging.Categories = []string{"unknown"} }},
+		{"plaintext-channel", func(c *contracts.ProfileConfig) { c.Channel.TLSRequired = false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := profileConfig()
+			tc.mutate(&cfg)
+			body, err := json.Marshal(map[string]any{"name": tc.name, "config": cfg})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := op.request(http.MethodPost, "/api/v1/profiles", string(body), true, true).Code; got != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid %s accepted: status=%d", tc.name, got)
+			}
+		})
+	}
+	for _, body := range []string{
+		`{"name":"bad-type","config":{"level":5}}`,
+		`{"name":"unknown-nested","config":{"unexpected":true}}`,
+	} {
+		if got := op.request(http.MethodPost, "/api/v1/profiles", body, true, true).Code; got != http.StatusBadRequest {
+			t.Fatalf("invalid type/field status=%d", got)
+		}
+	}
 
 	tooMany := profileConfig()
 	tooMany.Services = make([]contracts.Service, 17)
@@ -74,6 +108,28 @@ func TestQA01ProfileAuthorizationValidationAndRevisionIsolation(t *testing.T) {
 	}
 	if err = json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
 		t.Fatal("decode profile:", err)
+	}
+	// The UI copy operation creates a new profile from the authorized revision.
+	copyResponse := op.request(http.MethodPost, "/api/v1/profiles", profileJSON("QA-01 copy", 0), true, true)
+	var copied struct {
+		Profile contracts.Profile `json:"profile"`
+	}
+	if copyResponse.Code != http.StatusCreated || json.Unmarshal(copyResponse.Body.Bytes(), &copied) != nil || copied.Profile.ID == createdBody.Profile.ID || copied.Profile.ID == "" {
+		t.Fatal("profile copy did not create an independent profile")
+	}
+	if got := op.request(http.MethodGet, "/api/v1/profiles/"+copied.Profile.ID+"/revisions/1/sensitive", "", false, true); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "lab-credential-secret") || !strings.Contains(got.Body.String(), "synthetic report") {
+		t.Fatal("copy lost synthetic credentials or fake files")
+	}
+	low := profileConfig()
+	low.Level = "low"
+	low.TemplateID = "low-http"
+	low.SyntheticCredentials = nil
+	lowBody, err := json.Marshal(map[string]any{"name": "QA-01 Low", "config": low})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := op.request(http.MethodPost, "/api/v1/profiles", string(lowBody), true, true).Code; got != http.StatusCreated {
+		t.Fatalf("valid Low profile status=%d", got)
 	}
 	for _, actor := range []*testAPI{op, viewer} {
 		read := actor.request(http.MethodGet, "/api/v1/profiles/"+createdBody.Profile.ID, "", false, true)
@@ -138,6 +194,10 @@ func TestQA01ProfileAuthorizationValidationAndRevisionIsolation(t *testing.T) {
 }
 
 func TestQA01RegistrationAndSecretBoundary(t *testing.T) {
+	var capturedLogs bytes.Buffer
+	originalLog := log.Writer()
+	log.SetOutput(&capturedLogs)
+	t.Cleanup(func() { log.SetOutput(originalLog) })
 	db, _, cleanup := setupIntegration(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -170,7 +230,9 @@ func TestQA01RegistrationAndSecretBoundary(t *testing.T) {
 	if issued.Code != http.StatusCreated {
 		t.Fatalf("enrollment issue=%d body=%s", issued.Code, issued.Body.String())
 	}
-	var tokenResponse struct{ Token string `json:"token"` }
+	var tokenResponse struct {
+		Token string `json:"token"`
+	}
 	if err = json.Unmarshal(issued.Body.Bytes(), &tokenResponse); err != nil || tokenResponse.Token == "" {
 		t.Fatal("enrollment token missing")
 	}
@@ -215,5 +277,10 @@ func TestQA01RegistrationAndSecretBoundary(t *testing.T) {
 	}
 	if w := viewer.request(http.MethodGet, "/api/v1/auth/me", "", false, true); w.Code != http.StatusUnauthorized {
 		t.Fatalf("expired session remained valid=%d", w.Code)
+	}
+	for _, secret := range []string{"qa01-password-12", op.cookie, op.csrf, viewer.cookie, viewer.csrf, tokenResponse.Token} {
+		if secret != "" && strings.Contains(capturedLogs.String(), secret) {
+			t.Fatal("authentication secret leaked to application logs")
+		}
 	}
 }

@@ -10,7 +10,8 @@ not a recording of external attacks.
    tokens, and start their agents.
 4. Request the Low archive and perform a failed then successful Medium login.
    Open a synthetic file and run the allowed pseudo-command. Show the resulting
-   event/session timeline in the dashboard.
+   events in the current journal and the session timeline through the API.
+   The complete timeline/dashboard UI depends on #12/#13; do not present it as finished.
 5. Create revision 2, assign/apply it only to trap A, and show the changed
    banner/credentials. Confirm trap B still reports its previous applied
    revision and response.

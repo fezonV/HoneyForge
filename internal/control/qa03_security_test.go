@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -62,7 +63,7 @@ func TestQA03SensitiveDataAndManagementBoundary(t *testing.T) {
 		t.Fatal("seed agent:", err)
 	}
 	payload := `{"username":"alice","password":"visitor-secret","html":"<script>alert(1)</script>","formula":"=1+1"}`
-	if _, err = db.Exec(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,profile_id,applied_revision,event_type,occurred_at,source_ip,destination_port,protocol,payload) VALUES($1,'1.0',$2,$3,'web',$4,1,'http.request','2026-10-14T12:00:00Z','192.0.2.53',80,'http',$5::jsonb)`, eventID, trap.ID, agentID, profileBody.Profile.ID, payload); err != nil {
+	if _, err = db.Exec(ctx, `INSERT INTO events(id,schema_version,trap_id,agent_id,service_id,profile_id,applied_revision,event_type,occurred_at,source_ip,destination_port,protocol,payload,source_asn_org) VALUES($1,'1.0',$2,$3,'web',$4,1,'http.request','2026-10-14T12:00:00Z','192.0.2.53',80,'http',$5::jsonb,'=1+1')`, eventID, trap.ID, agentID, profileBody.Profile.ID, payload); err != nil {
 		t.Fatal("seed sensitive event:", err)
 	}
 
@@ -85,8 +86,12 @@ func TestQA03SensitiveDataAndManagementBoundary(t *testing.T) {
 		t.Fatalf("operator sensitive event status=%d body=%s", operatorSensitive.Code, operatorSensitive.Body.String())
 	}
 	operatorCSV := op.request(http.MethodGet, "/api/v1/events/export.csv?trap_id="+trap.ID+"&from=2026-10-14T00%3A00%3A00Z&to=2026-10-15T00%3A00%3A00Z", "", false, true)
-	if operatorCSV.Code != http.StatusOK || strings.Contains(operatorCSV.Body.String(), "visitor-secret") || strings.Contains(operatorCSV.Body.String(), "=1+1") {
+	if operatorCSV.Code != http.StatusOK || strings.Contains(operatorCSV.Body.String(), "visitor-secret") {
 		t.Fatalf("operator CSV leaked or failed formula neutralization: %d %s", operatorCSV.Code, operatorCSV.Body.String())
+	}
+	rows, err := csv.NewReader(strings.NewReader(operatorCSV.Body.String())).ReadAll()
+	if err != nil || len(rows) != 2 || len(rows[1]) != 14 || rows[1][1] != eventID || rows[1][10] != "'=1+1" {
+		t.Fatalf("CSV did not neutralize a field actually included in the export: rows=%v err=%v", rows, err)
 	}
 	if w := viewer.request(http.MethodGet, "/api/v1/audit", "", false, true); w.Code != http.StatusForbidden {
 		t.Fatalf("viewer audit status=%d", w.Code)

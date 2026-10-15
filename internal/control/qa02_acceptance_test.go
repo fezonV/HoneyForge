@@ -63,7 +63,7 @@ func TestQA02EventDeliveryRetainsIDsAcrossOutageAndLostACK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer queue.Close()
+	defer func() { _ = queue.Close() }()
 	ctx := context.Background()
 	events := []contracts.Event{
 		be03Event(uuid(), state.TrapID, state.AgentID, profileID, "", 1, "http.request", "2026-10-14T12:00:00Z"),
@@ -110,11 +110,26 @@ func TestQA02EventDeliveryRetainsIDsAcrossOutageAndLostACK(t *testing.T) {
 	if depth, depthErr := queue.Depth(ctx); depthErr != nil || depth != 0 {
 		t.Fatalf("retry left queue depth=%d err=%v", depth, depthErr)
 	}
-	var count int
-	if err = db.QueryRow(ctx, `SELECT count(*) FROM events WHERE agent_id=$1`, state.AgentID).Scan(&count); err != nil {
+	expected := map[string]bool{lostACK.EventID: true}
+	for _, event := range events {
+		expected[event.EventID] = true
+	}
+	rows, err := db.Query(ctx, `SELECT id::text FROM events WHERE agent_id=$1`, state.AgentID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if count != len(events)+1 {
-		t.Fatalf("center stored %d rows, want %d unique event IDs", count, len(events)+1)
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if !expected[id] {
+			t.Fatal("unexpected or duplicate event ID:", id)
+		}
+		delete(expected, id)
+	}
+	if err = rows.Err(); err != nil || len(expected) != 0 {
+		t.Fatalf("missing event IDs=%v err=%v", expected, err)
 	}
 }

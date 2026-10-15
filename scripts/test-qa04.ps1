@@ -12,18 +12,25 @@ try {
         $formatDiff = gofmt -d $goFiles
         if ($formatDiff) { throw "gofmt reported differences:`n$formatDiff" }
     }
-    go test -race -short -count=1 ./...
-    go vet ./...
-    go build ./...
-    npx --yes @redocly/cli@latest lint api/openapi.yaml
+    & bash ./scripts/test-qa.sh
+    if ($LASTEXITCODE -ne 0) { throw 'Backend acceptance failed.' }
+
     Push-Location web
     try {
         npm ci
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
         npm run build
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
         npm run lint
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
+        npm run lint:api
+        if ($LASTEXITCODE -ne 0) { throw 'OpenAPI validation failed.' }
         npx playwright install chromium
-        npm run test:e2e -- e2e/trap-realtime.spec.mjs e2e/trap-control.spec.mjs e2e/profile-preview.spec.mjs --reporter=line
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
+        npm run test:e2e -- e2e/api-contract.spec.mjs e2e/trap-realtime.spec.mjs e2e/trap-control.spec.mjs e2e/profile-preview.spec.mjs --reporter=line
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
         npm run test:e2e -- e2e/trap-park.spec.mjs --reporter=line
+        if ($LASTEXITCODE -ne 0) { throw 'QA-04 command failed.' }
     }
     finally {
         Pop-Location

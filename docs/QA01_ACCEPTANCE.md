@@ -16,18 +16,22 @@ $env:TEST_DATABASE_URL = 'postgres://<test-user>:<test-password>@127.0.0.1:5432/
 The same checks can be run directly with Go:
 
 ```powershell
-go test -race -count=1 -run 'TestOpenAPIContract|TestQA01' ./api ./internal/control
+go test -race -count=1 -run 'TestOpenAPIContract|TestQA01|TestControlPostgresFoundation' ./api ./internal/control
 ```
 
 `TEST_DATABASE_URL` must point to a disposable test database. Without it, the
 database-backed cases are reported as skipped by Go and are not an acceptance
 result.
 
+Canonical complete Linux acceptance (no skipped tests): `scripts/test-qa.sh`.
+The narrow QA-01 command also includes `TestControlPostgresFoundation`: concurrent
+enrollment, expiry/cross-trap/credential boundaries, audit and CRUD negatives.
+
 ## Traceability
 
 | Test | Requirement and evidence |
 | --- | --- |
-| `TestOpenAPIContractDeclaresRequiredQA01Surface` | The versioned OpenAPI document declares auth, templates, profile/revision, trap assignment, enrollment, and the security fields used by clients. |
+| `TestOpenAPIContractDeclaresRequiredQA01Surface` | Parses YAML and checks actual path/method/schema locations; pinned Redocly validates syntax/references. The versioned OpenAPI document declares auth, templates, profile/revision, trap assignment, enrollment, and the security fields used by clients. |
 | `TestQA01ProfileAuthorizationValidationAndRevisionIsolation` | Anonymous `401`, viewer `403`, CSRF-protected operator writes, unknown-field rejection, collection limits, invalid revision rejection, optimistic revision conflict, assignment/delete rules, redacted create responses, and unchanged `applied_revision`. |
 | `TestQA01RegistrationAndSecretBoundary` | Viewer cannot issue enrollment, enrollment is one-time, invalid tokens are rejected, only a hash is persisted, registration history omits tokens, logout requires CSRF, and logout/expiry invalidate sessions. |
 

@@ -109,10 +109,12 @@ func TestBE02SixtySecondOutageRestartAndLostCommitACK(t *testing.T) {
 	}
 	defer func() { _ = q.Close() }()
 	started := time.Now()
+	expected := map[string]bool{}
 	for half := 0; half < 2; half++ {
 		ipc := agent.IPCHandler(q, state, "ipc-secret")
 		for i := 0; i < 50; i++ {
 			event := be03Event(uuid(), state.TrapID, state.AgentID, profileID, "", 1, "http.request", time.Now().UTC().Format(time.RFC3339Nano))
+			expected[event.EventID] = true
 			body, _ := json.Marshal(event)
 			req := httptest.NewRequest("POST", "/v1/events", bytes.NewReader(body))
 			req.Header.Set("Authorization", "Bearer ipc-secret")
@@ -166,9 +168,23 @@ func TestBE02SixtySecondOutageRestartAndLostCommitACK(t *testing.T) {
 	if depth, err := q.Depth(ctx); err != nil || depth != 0 {
 		t.Fatalf("recovered depth=%d err=%v", depth, err)
 	}
-	var count int
-	if err = db.QueryRow(ctx, `SELECT count(*) FROM events WHERE agent_id=$1`, state.AgentID).Scan(&count); err != nil || count != 100 {
-		t.Fatalf("durable events=%d err=%v", count, err)
+	rows, err := db.Query(ctx, `SELECT id::text FROM events WHERE agent_id=$1`, state.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if !expected[id] {
+			t.Fatal("unexpected or duplicate event ID:", id)
+		}
+		delete(expected, id)
+	}
+	if err = rows.Err(); err != nil || len(expected) != 0 {
+		t.Fatalf("missing event IDs=%v err=%v", expected, err)
 	}
 	t.Logf("management outage %s; restart at 30s; 100 local ACKs, 100 PostgreSQL rows after lost commit ACK and retry", time.Since(started).Round(time.Millisecond))
 }

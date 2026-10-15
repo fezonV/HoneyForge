@@ -46,3 +46,22 @@ commit. Проверяется множество `event_id`, глубина о�
   отказ записи, отсутствие ACK и сохранение уже записанных событий.
 - Все cleanup-операции ограничены временными каталогами и изолированной схемой;
   пользовательский стенд и рабочая база не используются.
+
+## Integration corrections
+
+Run the complete Linux gate with `scripts/test-qa.sh` (no `-short`, real process
+flag enabled). The short QA script includes the PostgreSQL foundation tests for
+filters/cursors. Both outage tests compare exact locally acknowledged IDs with
+PostgreSQL IDs. The 60-second outage simulates HTTP 503, closes/reopens the
+SQLite queue and loses a post-commit response; it is not a physical network
+partition or a PostgreSQL process restart. The agent crash test uses a real
+process with a controlled TLS endpoint, while live Playwright uses actual
+control/agents/decoys/PostgreSQL.
+
+`TestQA02HTTPActionLoadToCommittedEvents` offers 3000 real HTTP actions at 50/s
+for 60 seconds through decoy → HTTP IPC → SQLite → TLS → PostgreSQL and measures
+committed-event observation latency. It compares local ACK IDs and stored IDs.
+This metric is not UI rendering latency. The final dashboard latency still
+depends on #12/#13. Compose independently checks combined filters/cursors over 125 IDs and a 132-ID
+timeline before/after a real PostgreSQL/control restart on a persisted volume,
+including historical revision 1 after creating profile revision 2.

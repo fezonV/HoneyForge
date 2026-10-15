@@ -1,20 +1,44 @@
 # HoneyForge acceptance runbook
 
-Use a disposable PostgreSQL database and a clean checkout. Copy `.env.example`
-to `.env`, set a random URI-safe password, and keep all runtime files under a
-temporary directory. Create operator and viewer accounts with the documented
-`go run ./cmd/control -create-user` command; no default account exists.
+Use a clean checkout and a disposable PostgreSQL database. No default operator
+exists. All traffic below is synthetic lab traffic. CI uses isolated service
+containers; the Go tests create random schemas and live Playwright creates and
+drops its own schema. Never point TEST_DATABASE_URL at a user/production database.
 
-The acceptance order is:
+On Linux with Go 1.27.2, Node.js 22+, Python 3, OpenSSL and Docker Compose:
 
-1. Run the backend, schema, security, and queue checks from QA-01–03.
-2. Run the Playwright mock smoke to verify reconnect, viewer, form conflicts,
-   session expiry, and safe rendering.
-3. Run `trap-park.spec.mjs` with `TEST_DATABASE_URL` to verify the live API and
-   Low/Medium runtime.
-4. Run `scripts/test-fe2-bundle.sh` only on the prepared Linux Docker host when
-   remote bundle acceptance is required.
+```sh
+export TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/<test-database>?sslmode=disable'
+scripts/test-qa.sh
+npm --prefix web ci
+npm --prefix web run lint:api
+npm --prefix web run build
+npm --prefix web run lint
+(cd web && npx playwright install --with-deps chromium)
+npm --prefix web run test:e2e
+scripts/test-compose.sh
+tests/security/run.sh
+```
 
-Record the commit SHA and environment before running. Save Playwright artifacts
-and the command output. A skipped database test is a missing prerequisite, not a
-pass.
+`scripts/test-qa.sh` runs full race tests, including the 60-second outage,
+process crash/restart and 60-second HTTP load; it rejects test skips and missing
+acceptance tests, then runs vet/build. Packages without test files are not test
+skips. Missing TEST_DATABASE_URL fails before testing; live Playwright also fails
+instead of skipping. All 28 Playwright cases must run in the full browser command.
+OpenAPI tooling is pinned in web/package-lock.json. ESLint/OpenAPI warnings are
+reported separately from errors.
+
+Compose starts a new project/volume, checks migrations/readiness, restarts
+PostgreSQL/control and verifies persistence. Cleanup is scoped to its project.
+The security command is a separate deployment gate and currently exposes the
+open MASK-2 defect in #4; its nonzero result must not be counted as acceptance.
+See [security harness](../tests/security/README.md).
+
+`scripts/test-fe2-bundle.sh` creates its own disposable Docker-in-Docker Linux
+node and runs the downloaded ZIP installer there. This is container-host bundle
+evidence, not an independent VM/firewall qualification. On a managed proxy host,
+its public CA is copied only into the temporary node's trust bundle.
+
+Record the exact SHA, environment, commands, outcomes and limitations in
+[QA04_REPORT.md](QA04_REPORT.md). Full acceptance remains open while #4, #12,
+#13, the external MASK stand and final delivery materials are incomplete.

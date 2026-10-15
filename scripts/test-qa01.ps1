@@ -7,7 +7,7 @@ if (-not $env:TEST_DATABASE_URL) {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
-    go test -race -count=1 -run 'TestOpenAPIContract|TestQA01' ./api ./internal/control
+    go test -race -count=1 -run 'TestOpenAPIContract|TestQA01|TestControlPostgresFoundation' ./api ./internal/control
     if ($LASTEXITCODE -ne 0) {
         throw "QA-01 failed with exit code $LASTEXITCODE."
     }
