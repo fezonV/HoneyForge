@@ -20,6 +20,7 @@ type View struct {
 	Title, Service, Banner, Prompt, Message string
 	State, Path, Body, Output, DownloadURL  string
 	SignedIn                                bool
+	Size                                    int
 	Documents                               []Document
 }
 

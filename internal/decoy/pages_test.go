@@ -1,6 +1,7 @@
 package decoy
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,7 @@ import (
 func TestArchivePagesUseServerSessionsAndAppliedContent(t *testing.T) {
 	cfg := testConfig("medium")
 	cfg.Config.VisibleTexts.Title = `<script>alert('title')</script>`
-	cfg.Config.FakeFS[0].Content = "<script>alert('file')</script>"
+	cfg.Config.FakeFS[0].Content = "Отчёт — <script>alert('file')</script>"
 	sink := &memorySink{}
 	s, err := New(cfg, sink)
 	if err != nil {
@@ -53,6 +54,8 @@ func TestArchivePagesUseServerSessionsAndAppliedContent(t *testing.T) {
 	}
 	if w := request("/files?path=reports%2Fsummary.txt&view=1", "", cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "download=1") || strings.Contains(w.Body.String(), "<script>") || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatalf("file view: %d %s", w.Code, w.Body.String())
+	} else if !strings.Contains(w.Body.String(), fmt.Sprintf("TXT · %d Б", len(cfg.Config.FakeFS[0].Content))) {
+		t.Fatal("file view size does not match the UTF-8 download bytes")
 	}
 	if w := request("/files?path=reports%2Fsummary.txt&download=1", "", cookie); w.Code != 200 || w.Body.String() != cfg.Config.FakeFS[0].Content || !strings.Contains(w.Header().Get("Content-Disposition"), "attachment") {
 		t.Fatalf("download: %d %s", w.Code, w.Body.String())

@@ -274,6 +274,8 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await visit.getByRole('button', { name: 'Войти' }).click();
   await visit.getByRole('link', { name: 'reports/summary.txt', exact: true }).click();
   await expect(visit.locator('pre')).toContainText('Synthetic report from applied profile');
+  await expect(visit.locator('.file-meta')).toHaveText(`TXT · ${Buffer.byteLength(medium.config.fake_fs[0].content)} Б`);
+  await expect(visit.getByRole('link', { name: 'К списку файлов', exact: true })).toHaveAttribute('href', '/files');
   await visit.getByRole('link', { name: 'Консоль', exact: true }).click();
   await visit.getByLabel('Команда').fill('cat reports/summary.txt');
   await visit.getByRole('button', { name: 'Выполнить' }).click();
