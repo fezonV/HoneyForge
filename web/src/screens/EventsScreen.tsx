@@ -9,6 +9,7 @@ import { EventDetails } from '../components/events/EventDetails';
 import { SessionTimeline } from '../components/events/SessionTimeline';
 import { eventTypes, FILTER_KEYS, getEventSearch, navigateEvents, readFilters } from '../components/events/eventView';
 import { useEventFeed } from '../components/events/useEventFeed';
+import { EventExport } from '../components/events/EventExport';
 
 const dateInput = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().slice(0, 19) : '';
 const inputClass = 'block w-full border border-slate-300 rounded p-2 mt-1 text-sm';
@@ -94,6 +95,7 @@ export const EventsScreen = ({ eventRevision = 0, connectionStatus = 'disconnect
     {(feed.changed || feed.newCount > 0) && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex flex-wrap gap-3 items-center" role="status">
       <p>Новых событий в начале выборки: {feed.newCount}{feed.overflow ? '+' : ''}. {feed.overflow ? 'Буфер ограничен; обновите выборку из REST.' : 'История могла измениться, включая более ранние события.'}</p><Button size="sm" onClick={fresh}>Показать новые события</Button>
     </div>}
+    <EventExport filters={filters} />
     {feed.loading && <p role="status">Загрузка событий…</p>}
     {feed.error && <div role="alert" className="border border-rose-200 bg-rose-50 rounded p-3 space-y-2"><p>{feed.error}</p>{feed.items.length > 0 && <p>Показан предыдущий снимок, актуальность не подтверждена.</p>}<Button size="sm" variant="outline" onClick={feed.refresh}>Повторить чтение событий</Button></div>}
     {!feed.loading && !feed.error && feed.items.length === 0 && <p className="bg-white border rounded-xl p-6">События не найдены. Проверьте фильтры или выполните запрос к Low/Medium.</p>}

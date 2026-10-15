@@ -381,18 +381,18 @@ test('real Low/Medium creation, bundles, agents, applied revision, stopped and o
   await stop(lowRuntime.agent);
 });
 
-test('FE2-03 PostgreSQL history beyond 100 combines all filters and audits explicit sensitive reads', async ({ page, browser }, testInfo) => {
+test('FE2-03/FE2-04 PostgreSQL history, dashboard, actual audit and full server CSV', async ({ page, browser }, testInfo) => {
   await login(page);
   const selected = await profile(page, 'medium');
-  const created = await page.request.post('/api/v1/traps', { headers: await headers(page), data: { name: 'Historical query fixture', deployment_bindings: [] } });
+  const created = await page.request.post('/api/v1/traps', { headers: await headers(page), data: { name: 'Historical query fixture', deployment_bindings: [{ service_id: 'web', host_port: selected.config.services[0].port }] } });
   expect(created.ok()).toBeTruthy();
   const trap = await created.json(), agentId = randomUUID(), sessionId = randomUUID();
   // Stored historical fixtures exercise the real query path; live visitor telemetry is tested above.
   await database.query(`INSERT INTO "${schema}".agents(id,trap_id,token_hash) VALUES($1,$2,$3)`, [agentId, trap.id, Buffer.from(randomUUID())]);
   await database.query(`INSERT INTO "${schema}".visitor_sessions(id,trap_id,started_at) VALUES($1,$2,'2026-01-01T00:00:00Z')`, [sessionId, trap.id]);
-  await database.query(`INSERT INTO "${schema}".events(id,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload)
+  await database.query(`INSERT INTO "${schema}".events(id,trap_id,agent_id,service_id,session_id,profile_id,applied_revision,event_type,occurred_at,source_ip,source_port,destination_port,protocol,payload,source_asn_org)
     SELECT gen_random_uuid(),$2::uuid,$3::uuid,'web',$1::uuid,$4::uuid,1,'file.read', '2026-01-01T00:00:00Z'::timestamptz + i * interval '1 second','198.51.100.82'::inet,42100,18080,'http',
-    '{"password":"historical-sensitive-only","path":"<script>window.pwned=1</script>"}'::jsonb FROM generate_series(0,129) AS i`, [sessionId, trap.id, agentId, selected.id]);
+    '{"password":"historical-sensitive-only","path":"<script>window.pwned=1</script>"}'::jsonb,'=1+1' FROM generate_series(0,129) AS i`, [sessionId, trap.id, agentId, selected.id]);
   const query = new URLSearchParams({ trap_id: trap.id, from: '2026-01-01T00:00:00Z', to: '2026-01-01T00:03:00Z', source_ip: '198.51.100.82', event_type: 'file.read', session_id: sessionId });
   await page.goto(`/#events?${query}`);
   await expect(page.locator('tbody tr')).toHaveCount(50);
@@ -424,7 +424,51 @@ test('FE2-03 PostgreSQL history beyond 100 combines all filters and audits expli
   await expect(readOnly.getByRole('button', { name: 'Запросить payload с аудитом' })).toHaveCount(0);
   expect((await readOnly.request.get(`${endpoint}/sensitive`)).status()).toBe(403);
   expect(await (await readOnly.request.get(endpoint)).text()).not.toContain('historical-sensitive-only');
+  expect((await readOnly.request.get('/api/v1/audit')).status()).toBe(403);
+  expect((await readOnly.request.get(`/api/v1/events/export.csv?${query}`)).status()).toBe(403);
+  await readOnly.goto('/#audit');
+  await expect(readOnly.getByRole('alert').filter({ hasText: 'Аудит доступен только оператору' })).toBeVisible();
   await viewer.close();
+
+  // Dashboard must agree with the full PostgreSQL selection, not the loaded page.
+  const from = query.get('from'), to = query.get('to');
+  const summary = await (await page.request.get(`/api/v1/events/summary?from=${from}&to=${to}`)).json();
+  expect(summary.total_events).toBe(130);
+  await page.goto(`/#overview?${new URLSearchParams({ from, to })}`);
+  await expect(page.getByRole('link', { name: 'Все события периода: 130' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'События за период' })).toContainText('Уникальных IP: 1');
+  await expect(page.getByRole('region', { name: 'Динамика событий' })).toContainText('Предыдущий период: 0');
+  await page.screenshot({ path: testInfo.outputPath('dashboard-postgres.png'), fullPage: true });
+  await page.getByRole('link', { name: 'Все события периода: 130' }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  const csvDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать CSV выборки' }).click();
+  const csv = readFileSync(await (await csvDownload).path(), 'utf8');
+  expect(csv.trim().split('\n')).toHaveLength(131);
+  expect(csv).not.toContain('historical-sensitive-only');
+  expect(csv).not.toContain('<script>');
+  expect(csv).toContain("'=1+1");
+
+  // Real profile revision/assignment/command API writes produce real audit rows.
+  const patch = await page.request.patch(`/api/v1/profiles/${selected.id}`, { headers: await headers(page), data: { base_revision: 1, name: 'FE2-04 revised profile', config: selected.config } });
+  expect(patch.ok()).toBeTruthy();
+  expect((await page.request.put(`/api/v1/traps/${trap.id}/profile`, { headers: await headers(page), data: { profile_id: selected.id, revision: 2 } })).ok()).toBeTruthy();
+  const queued = await page.request.post(`/api/v1/traps/${trap.id}/commands`, { headers: await headers(page), data: { type: 'stop', expected_profile_id: selected.id, expected_revision: 2, ttl_seconds: 1 } });
+  expect(queued.ok()).toBeTruthy();
+  const command = await queued.json();
+  await expect.poll(async () => (await (await page.request.get(`/api/v1/traps/${trap.id}/commands`)).json()).items.find((item) => item.id === command.id)?.status).toBe('expired');
+  const actor = await (await page.request.get('/api/v1/auth/me')).json();
+  await page.goto(`/#audit?actor_id=${actor.id}&action=profile.revision_created`);
+  await expect(page.getByRole('table')).toContainText(selected.id);
+  await page.getByRole('link', { name: `profile: ${selected.id}` }).click();
+  await expect(page.getByRole('dialog', { name: 'Профиль: FE2-04 revised profile (rev 2)' })).toBeVisible();
+  await page.goto(`/#audit?actor_id=${actor.id}&action=trap.profile_assigned`);
+  await expect(page.getByRole('table')).toContainText(trap.id);
+  await page.goto(`/#audit?actor_id=${actor.id}&action=command.queued`);
+  const commandRow = page.getByRole('row').filter({ hasText: command.id });
+  await expect(commandRow).toContainText('queued — поставлена в очередь');
+  await commandRow.getByRole('button', { name: 'Проверить результат команды' }).click();
+  await expect(commandRow).toContainText('Текущее состояние: expired');
 });
 
 test('viewer has read-only UI and direct API denies enrollment and bundle', async ({ page }) => {

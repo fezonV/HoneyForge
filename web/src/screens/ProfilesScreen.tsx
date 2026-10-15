@@ -22,11 +22,14 @@ import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/St
 import { ProfileWizardModal } from '../components/profiles/ProfileWizardModal';
 import { ProfileDetailModal } from '../components/profiles/ProfileDetailModal';
 import { ProfileDeleteModal } from '../components/profiles/ProfileDeleteModal';
+import { useHashQuery } from '../components/common/queryState';
 
 export const ProfilesScreen: React.FC = () => {
   const { role } = useAuth();
   const { notify } = useNotification();
   const isViewer = role === 'viewer';
+  const profileQuery = useHashQuery();
+  const linkedProfileId = new URLSearchParams(profileQuery).get('profile_id');
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [traps, setTraps] = useState<Trap[]>([]);
@@ -129,6 +132,10 @@ export const ProfilesScreen: React.FC = () => {
     return traps.filter((t) => t.desired_profile_id === profileId || t.applied_profile_id === profileId);
   };
 
+  useEffect(() => {
+    if (linkedProfileId && !isLoading) setDetailProfile(profiles.find((profile) => profile.id === linkedProfileId) || null);
+  }, [linkedProfileId, profiles, isLoading]);
+
   // Filter profiles
   const filteredProfiles = profiles.filter((prof) => {
     const query = searchQuery.trim().toLowerCase();
@@ -145,6 +152,7 @@ export const ProfilesScreen: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Title & Actions Bar */}
+      {linkedProfileId && !isLoading && !error && !profiles.some((profile) => profile.id === linkedProfileId) && <p role="alert">Профиль по ссылке отсутствует или недоступен. Идентификатор: {linkedProfileId}</p>}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Реестр профилей ловушек</h1>
@@ -397,7 +405,7 @@ export const ProfilesScreen: React.FC = () => {
       {/* Profile Detailed Inspect Modal (Preview TL-01, Revisions History, Diff, Linked Traps, JSON) */}
       <ProfileDetailModal
         isOpen={!!detailProfile}
-        onClose={() => setDetailProfile(null)}
+        onClose={() => { setDetailProfile(null); if (linkedProfileId) window.location.hash = 'profiles'; }}
         profile={detailProfile}
         linkedTraps={detailProfile ? getLinkedTraps(detailProfile.id) : []}
         isViewer={isViewer}

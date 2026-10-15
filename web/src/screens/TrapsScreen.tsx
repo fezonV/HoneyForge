@@ -190,7 +190,12 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
   }, [chosenRevision]);
 
   useEffect(() => {
-    const sync = () => setSelectedId(window.location.hash.match(/^#traps\/([a-f0-9-]{36})$/i)?.[1] || null);
+    const sync = () => {
+      setSelectedId(window.location.hash.match(/^#traps\/([a-f0-9-]{36})$/i)?.[1] || null);
+      const status = new URLSearchParams(window.location.hash.split('?')[1] || '').get('status');
+      if (status && ['online', 'offline', 'degraded'].includes(status)) setStatusFilter(status);
+      else setStatusFilter('all');
+    };
     sync();
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
@@ -200,7 +205,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
   const filtered = useMemo(() => traps.filter((trap) =>
     (levelFilter === 'all' || trap.level === levelFilter) &&
     (profileFilter === 'all' || trap.profile_id === profileFilter) &&
-    (statusFilter === 'all' || (statusFilter === 'registration_failed' ? trap.registration_status === 'rejected' : statusFilter === 'unregistered' ? !trap.last_seen_at && trap.registration_status !== 'registered' && trap.registration_status !== 'rejected' : ['online', 'offline'].includes(statusFilter) ? !!trap.last_seen_at && trap.agent_status === statusFilter : trap.service_status === statusFilter))
+    (statusFilter === 'all' || (statusFilter === 'degraded' ? trap.service_status === 'degraded' || trap.service_status === 'error' || trap.telemetry?.degraded === true : statusFilter === 'registration_failed' ? trap.registration_status === 'rejected' : statusFilter === 'unregistered' ? !trap.last_seen_at && trap.registration_status !== 'registered' && trap.registration_status !== 'rejected' : ['online', 'offline'].includes(statusFilter) ? trap.agent_status === statusFilter : trap.service_status === statusFilter))
   ), [traps, levelFilter, profileFilter, statusFilter]);
 
   const create = async () => {
@@ -264,7 +269,7 @@ export const TrapsScreen: React.FC<{ realtimeRevision?: number }> = ({ realtimeR
     </div>
     <div className="bg-white border rounded-xl p-4 flex flex-wrap gap-3 text-sm">
       <label>Уровень <select className="border rounded ml-2 p-1" value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}><option value="all">Все</option><option value="low">Low</option><option value="medium">Medium</option></select></label>
-      <label>Состояние <select className="border rounded ml-2 p-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Все</option><option value="unregistered">Ожидает регистрации</option><option value="registration_failed">Отказ регистрации</option><option value="online">Агент online</option><option value="offline">Агент offline</option><option value="running">Сервис работает</option><option value="stopped">Сервис остановлен</option><option value="error">Ошибка сервиса</option></select></label>
+      <label>Состояние <select aria-label="Состояние" className="border rounded ml-2 p-1" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Все</option><option value="unregistered">Ожидает регистрации</option><option value="registration_failed">Отказ регистрации</option><option value="online">Агент online</option><option value="offline">Агент offline</option><option value="degraded">Degraded (сервис/телеметрия)</option><option value="running">Сервис работает</option><option value="stopped">Сервис остановлен</option><option value="error">Ошибка сервиса</option></select></label>
       <label>Профиль <select className="border rounded ml-2 p-1" value={profileFilter} onChange={(e) => setProfileFilter(e.target.value)}><option value="all">Все</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     </div>
     {loading ? <LoadingSkeleton rows={4} /> : error ? <ErrorState message={error} onRetry={() => refresh(true)} /> : traps.length === 0 ? <EmptyState title="Ловушек пока нет" description="Создайте экземпляр из профиля" /> : <div className="bg-white border rounded-xl overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr><th className="p-3">Экземпляр</th><th className="p-3">Уровень и профиль</th><th className="p-3">Revision</th><th className="p-3">Узел / Bindings</th><th className="p-3">Агент / сервис</th><th className="p-3">Last seen</th><th className="p-3">Ссылки</th></tr></thead><tbody>{filtered.map((trap) => <tr key={trap.id} className="border-t align-top"><td className="p-3"><strong>{trap.name}</strong><div className="font-mono text-xs break-all">{trap.id}</div></td><td className="p-3">{trap.profile_id ? <LevelBadge level={trap.level} /> : '—'}<div className="mt-1">{trap.profile_name}</div></td><td className="p-3">Желаемая: {trap.desired_revision ?? '—'}<br />Применена: {trap.applied_revision ?? '—'}</td><td className="p-3 font-mono text-xs"><div>{trap.deployment_node || 'Узел не указан'}</div>{trap.deployment_bindings?.map((binding) => <div key={binding.service_id}>{binding.bind_address || '*'}:{binding.host_port} ({binding.service_id})</div>)}</td><td className="p-3"><StatusBadge status={trap.status} /><div className="mt-1">Сервис: {serviceText(trap.service_status)}</div><div className="text-xs text-slate-500">{progress(trap)}</div></td><td className="p-3">{dateText(trap.last_seen_at)}</td><td className="p-3"><a className="text-brand-700 underline block" href={`#traps/${trap.id}`}>Карточка</a><a className="text-brand-700 underline block" href={`#events?trap_id=${encodeURIComponent(trap.id)}`}>События</a></td></tr>)}</tbody></table>{filtered.length === 0 && <p className="p-4 text-slate-500">Нет ловушек с такими фильтрами.</p>}</div>}

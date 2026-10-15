@@ -65,7 +65,7 @@ const MainLayout: React.FC = () => {
 
       {/* Main Content View */}
       <main className="flex-1">
-        {currentTab === 'overview' && <OverviewScreen />}
+        {currentTab === 'overview' && <OverviewScreen key={`${user?.id}:${role}:${isDevMode}`} connectionStatus={realtime.status} />}
         {currentTab === 'profiles' && <ProfilesScreen />}
         {currentTab === 'traps' && <TrapsScreen realtimeRevision={realtime.revision} />}
         {currentTab === 'events' && <EventsScreen key={`${user?.id}:${role}:${isDevMode}`} eventRevision={realtime.eventRevision} connectionStatus={realtime.status} />}
