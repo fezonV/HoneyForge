@@ -1,0 +1,738 @@
+{
+  "source_revision": "44a74bf72b1e1a9c784e813899b0394d4950364e",
+  "run_url": "https://github.com/fezonV/HoneyForge/actions/runs/38725880927",
+  "results": [
+    {
+      "Action": "pass",
+      "Package": "honeyforge/api",
+      "Test": "TestOpenAPIContractDeclaresRequiredQA01Surface",
+      "Elapsed": 0.1
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/control",
+      "Test": "TestResolveDatabaseURLPrefersSecretFileAndTrimsNewline",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/control",
+      "Test": "TestResolveDatabaseURLRejectsMissingEmptyAndOversizedSecret",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestNewClientRequiresHTTPSOrigin",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestNewClientWithCAValidatesPrivateCenterCertificate",
+      "Elapsed": 0.08
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestNewClientWithCARejectsMalformedBundle",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestEnrollAndFetchConfig",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFetchConfigRejectsCrossTrapResponse",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFetchConfigRejectsInvalidProfileConfiguration",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestSaveAndLoadState",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestLoadStateRejectsBroadPermissions",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestCommandResultSurvivesLostACKAndRestart",
+      "Elapsed": 0.03
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestExpiredAndInterruptedCommandsNeverExecute/false",
+      "Elapsed": 0.03
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestExpiredAndInterruptedCommandsNeverExecute/true",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestExpiredAndInterruptedCommandsNeverExecute",
+      "Elapsed": 0.05
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestManagementRedirectCannotDowngradeTLS",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestHTTPDecoyAdapterApplyConfigurationRequiresMatchingAcknowledgement/matching_acknowledgement",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestHTTPDecoyAdapterApplyConfigurationRequiresMatchingAcknowledgement/mismatched_acknowledgement",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestHTTPDecoyAdapterApplyConfigurationRequiresMatchingAcknowledgement/server_error",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestHTTPDecoyAdapterApplyConfigurationRequiresMatchingAcknowledgement",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFlushQuarantinesOnlyPermanentlyRejectedEvent/validation_failed",
+      "Elapsed": 0.06
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFlushQuarantinesOnlyPermanentlyRejectedEvent/session_conflict",
+      "Elapsed": 0.03
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFlushQuarantinesOnlyPermanentlyRejectedEvent",
+      "Elapsed": 0.09
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/decoy",
+      "Test": "TestTwoDecoyProcessesAcceptance",
+      "Elapsed": 1.14
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFlushRetriesAuthorizationErrorsWithoutQuarantine",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestFlushRejectsUnexpectedAcknowledgedIDs",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestIPCHandlerPersistsEventAndInjectsAgentIdentity",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestIPCHandlerRejectsUnauthorizedAndUnavailableQueue",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestIPCStatusRequiresBearerAndExposesBoundedQuarantineWithoutPayload",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestIPCHandlerRejectsOversizedBodyAndMissingPayload",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestQA03TLSValidityAndHostname/valid",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestQA03TLSValidityAndHostname/expired",
+      "Elapsed": 0.08
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestQA03TLSValidityAndHostname/wrong-host",
+      "Elapsed": 0.26
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestQA03TLSValidityAndHostname",
+      "Elapsed": 0.35
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestQueueUsesPrivateFilesAndFullDurability",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestDiskFullDoesNotACKOrLoseExistingEvents",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestEventQueueDeduplicatesAndDetectsConflicts",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestEventQueueSurvivesReopenAndOnlyAckRemoves",
+      "Elapsed": 0.02
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestExecuteCommandRequiresLoadedTargetRevision",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/agent",
+      "Test": "TestExecuteCommandPropagatesAdapterFailure",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestArchivePagesUseServerSessionsAndAppliedContent",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestLowArchivePagesNeverServeSyntheticFileBodies",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestLowPageAndStop",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestMediumAuthFakeFSConsoleAndSessionIsolation",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestTelemetryFailureBlocksVisitorAction",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestApplyInvalidatesSessionsAndKeepsListenersFixed",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestAdminHandlerRequiresToken",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestHandlerNeverReturnsSyntheticPasswordInResponse",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestPublicResponsesDoNotExposeManagementMarkers",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestFakeFileRejectsEncodedAndAbsoluteHostPaths",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestSuccessfulLoginUsesOneSessionIDAcrossEvents",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestBoundedLoginRejectsOversizeWithoutCookie",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestConsoleLsOutputIsExactAndRejectsArguments",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestConsoleCatUsesExactSyntheticPathWithSpaces",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestApplyIdenticalRevisionPreservesSessionsAndRejectsChangedContent",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestFailedConfigurationStoreLeavesConfigAndSessionsUntouched",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestFileConfigurationStorePersistsForRestartAndCleansAtomicTemps",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestFileConfigurationStoreFailureKeepsOriginalAndLeavesNoTemps",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestCanceledApplyWaitingForRequestDoesNotMutateConfig",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestUnknownRouteAndPerServiceBanner",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestLowFilesExposeCatalogButNeverFileContent",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestConnectionTelemetryIsPerKeepAliveConnection",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestApplyWaitsForRequestAndCannotMixRevisions",
+      "Elapsed": 0.03
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestCatReturnsFullSyntheticContentAndBoundsTelemetry",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestExpiredSessionEndMustPersistBeforeRemoval",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/decoy",
+      "Test": "TestConnectionTelemetryFailureBlocksHTTPAction",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/visitorproxy",
+      "Test": "TestProxySourceValidation",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/visitorproxy",
+      "Test": "TestPrivateListenerPreservesVisitorAddressAndBufferedPayload",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/visitorproxy",
+      "Test": "TestRelaysBidirectionallyAndPreservesHalfClose",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestHeartbeatAndIntakeContinueDuringStalledDelivery",
+      "Elapsed": 5.19
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestReadSecretSupportsDockerSecretFiles",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestSyncConfigDoesNotChangeStateWhenPersistenceFails",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestCurrentServiceStateUsesAdapterStatus/running",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestCurrentServiceStateUsesAdapterStatus/adapter_error",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestCurrentServiceStateUsesAdapterStatus/unsupported_status",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestCurrentServiceStateUsesAdapterStatus/missing_adapter",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestCurrentServiceStateUsesAdapterStatus",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/cmd/agent",
+      "Test": "TestAgentProcessCrashRetainsAcknowledgedIPCEvents",
+      "Elapsed": 2.32
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestBE02SixtySecondOutageRestartAndLostCommitACK",
+      "Elapsed": 64.56
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestBE02IsolationCommandsTelemetryAndTransactionalFailure",
+      "Elapsed": 0.32
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestBE03AgentEventsMaintainVisitorSessions",
+      "Elapsed": 0.22
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestBE03DecoyTelemetryKeepsActuallyAppliedProfile",
+      "Elapsed": 0.24
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestRenderTrapBundleSeparatesEnrollmentSecret",
+      "Elapsed": 0.01
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestBundleRejectsIncompleteBindingsAndUnpinnedSource",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestControlPostgresFoundation",
+      "Elapsed": 3.85
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestOperatorDownloadsAuditedTrapBundle",
+      "Elapsed": 1.65
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestProfileValidatorRejectsUnsafePathsAndUnsupportedProtocol",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestParseEventFiltersCanonicalizesAndValidates",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestEventCursorRoundTripAndRejectsMalformed",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestParseEventPageAcceptsStructuredCursor",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestEventMetadataScanNeverLoadsRawPayload",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestSensitiveEventScanReturnsPayloadForAuditedHandler",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestSafeCSVCellNeutralizesFormulaPrefixes",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestAllowQueryRejectsRepeatedAndUnknownParameters",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestEventFilterArgsKeepNullAndBoundValues",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestOpenMaxMindGeoResolverCanBeDisabled",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestOpenMaxMindGeoResolverRequiresPinnedMetadata",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestGeoIPSkipsPrivateAndNonRoutableAddresses",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestGeoResolverReturnsUnknownForPrivateAddress",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/unsupported-high",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/empty-services",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/invalid-port",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/banner-limit",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/credential-limit",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/unknown-logging",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation/plaintext-channel",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01ProfileAuthorizationValidationAndRevisionIsolation",
+      "Elapsed": 0.87
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA01RegistrationAndSecretBoundary",
+      "Elapsed": 0.37
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA02EventDeliveryRetainsIDsAcrossOutageAndLostACK",
+      "Elapsed": 0.26
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA02HTTPActionLoadToCommittedEvents",
+      "Elapsed": 60.32
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestQA03SensitiveDataAndManagementBoundary",
+      "Elapsed": 0.23
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestTrapNodeAndRegistrationHistoryPersistWithoutSecrets",
+      "Elapsed": 0.49
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketHandshakeUsesConfiguredPublicOriginBehindProxy",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin/exact_origin",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin/missing_origin",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin/other_host",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin/same_host_different_scheme",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin/duplicate_origins",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWebsocketOriginRequiresExactConfiguredOrigin",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWSHubDisconnectsSlowClientsAtQueueLimit",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWSHubPublishesJSONNotifications",
+      "Elapsed": 0
+    },
+    {
+      "Action": "pass",
+      "Package": "honeyforge/internal/control",
+      "Test": "TestWSHubClosesConnectionsForRevokedSession",
+      "Elapsed": 0
+    }
+  ]
+}

@@ -133,6 +133,22 @@ API предоставляет `/healthz`, `/readyz`, `/api/v1` для опер�
 
 Полный контракт и примеры описаны в [api/openapi.yaml](api/openapi.yaml); отдельные JSON-файлы находятся в [examples](examples). Приём и чтение событий работают; `/api/v1/ws` передаёт авторизованным клиентам уведомления о сохранённых изменениях. Центр безопасного Compose размещения и текущие ограничения BE-04 описаны в [BE-04 foundation](docs/BE04_FOUNDATION.md). Операторский UI в [web/](web/README.md) использует `/api/v1`; парк, enrollment и запуск скачанного bundle проверены с настоящими агентами и Docker Compose. Остальные FE-задачи и production-приёмка остаются отдельными.
 
+Контрактные и API-проверки QA-01 для профилей, ролей, ревизий и регистрации
+запускаются одной командой из [docs/QA01_ACCEPTANCE.md](docs/QA01_ACCEPTANCE.md):
+`./scripts/test-qa01.ps1` с `TEST_DATABASE_URL`, указывающей на отдельную
+тестовую базу.
+Сквозная приёмка QA-02 для Low/Medium, команд и отказоустойчивой доставки
+описана в [docs/QA02_ACCEPTANCE.md](docs/QA02_ACCEPTANCE.md) и запускается
+через `./scripts/test-qa02.ps1` на отдельной PostgreSQL-базе.
+
+Проверки QA-03 для MASK-1–4, TLS, сегмента управления, секретов и интерфейсов
+описаны в [docs/QA03_ACCEPTANCE.md](docs/QA03_ACCEPTANCE.md) и запускаются
+через `./scripts/test-qa03.ps1` на отдельной PostgreSQL-базе.
+QA-04 запускает обязательные CI, schema, Compose health и Playwright smoke
+проверки. Матрица и воспроизводимый runbook находятся в
+[docs/QA04_ACCEPTANCE.md](docs/QA04_ACCEPTANCE.md), [docs/acceptance.md](docs/acceptance.md)
+и [docs/demo.md](docs/demo.md).
+
 ## Что готово в текущем прототипе
 
 - `main.go` запускает HTTP-сервер, встраивает HTML-страницы и хранит последние 100 событий в потокобезопасном журнале.

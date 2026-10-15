@@ -1,0 +1,175 @@
+name: HoneyForge QA
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main, codex/integrate-qa-ci]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Go, schema and static checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: honeyforge
+          POSTGRES_PASSWORD: qa04-password
+          POSTGRES_DB: honeyforge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U honeyforge -d honeyforge_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://honeyforge:qa04-password@127.0.0.1:5432/honeyforge_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.2
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -d $(git ls-files '*.go'))"
+      - name: Full race, PostgreSQL, process and reliability acceptance
+        shell: bash
+        run: |
+          set -o pipefail
+          scripts/test-qa.sh > qa-go.jsonl 2>&1 || { tail -100 qa-go.jsonl; exit 1; }
+      - name: Upload backend evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-backend
+          path: qa-go.jsonl
+          if-no-files-found: error
+      - name: Install pinned schema tooling
+        run: npm --prefix web ci
+      - name: Validate OpenAPI contract
+        run: npm --prefix web run lint:api
+      - name: Validate Compose model
+        shell: bash
+        run: |
+          cp .env.example .env
+          sed -i 's/CHANGE_ME_WITH_RANDOM_URI_SAFE_VALUE/qa04-password/g' .env
+          docker compose config -q
+
+  web:
+    name: Web build, lint and browser smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: Build and lint web
+        run: |
+          npm --prefix web run build
+          npm --prefix web run lint
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Run browser smoke
+        run: npm --prefix web run test:e2e -- e2e/api-contract.spec.mjs e2e/trap-realtime.spec.mjs e2e/trap-control.spec.mjs e2e/profile-preview.spec.mjs
+      - name: Upload browser artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa04-browser-smoke
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: error
+
+  live-e2e:
+    name: Live API and Low/Medium E2E
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: honeyforge
+          POSTGRES_PASSWORD: qa04-password
+          POSTGRES_DB: honeyforge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U honeyforge -d honeyforge_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://honeyforge:qa04-password@127.0.0.1:5432/honeyforge_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.2
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: Install browser and run live smoke
+        run: |
+          cd web
+          npx playwright install --with-deps chromium
+          npm run test:e2e -- e2e/trap-park.spec.mjs
+      - name: Upload live E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa04-live-e2e
+          path: |
+            web/test-results/
+            web/playwright-report/
+          if-no-files-found: error
+
+  compose-health:
+    name: Clean Compose startup and health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start clean local stack
+        shell: bash
+        run: |
+          scripts/test-compose.sh
+      - name: Upload Compose evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-compose
+          path: qa-compose.log
+          if-no-files-found: error
+
+  security-segments:
+    name: TLS facade and Docker network segments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify disposable security segments
+        shell: bash
+        run: tests/security/run.sh
+      - name: Upload segment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-security
+          path: qa-security.log
+          if-no-files-found: error
