@@ -1,6 +1,6 @@
 import React from 'react';
 import { Plus, Trash2, Key, FolderTree, Sparkles, Sliders } from 'lucide-react';
-import { VisibleTexts, SyntheticCredential, FakeFile, MaskingConfig } from '../../../api/types';
+import { VisibleTexts, SyntheticCredential, FakeFile } from '../../../api/types';
 
 interface Step3Props {
   level: 'low' | 'medium';
@@ -10,8 +10,6 @@ interface Step3Props {
   setCredentials: (creds: SyntheticCredential[]) => void;
   fakeFs: FakeFile[];
   setFakeFs: (files: FakeFile[]) => void;
-  masking: MaskingConfig;
-  setMasking: (masking: MaskingConfig) => void;
   errors: Record<string, string>;
 }
 
@@ -23,8 +21,6 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
   setCredentials,
   fakeFs,
   setFakeFs,
-  masking,
-  setMasking,
   errors,
 }) => {
   const isMedium = level === 'medium';
@@ -72,15 +68,15 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
   const handleGenerateSampleFs = () => {
     setFakeFs([
       {
-        path: '/regulations/archive-rules.txt',
+        path: 'regulations/archive-rules.txt',
         content: 'Регламент доступа к архивному фонду. Утверждён приказом № 42-А.\nВсе действия пользователей логируются.',
       },
       {
-        path: '/reports/quarterly-review-q3.txt',
+        path: 'reports/quarterly-review-q3.txt',
         content: 'Квартальный отчёт инвентаризации документов.\nВсего проверено: 154 дела.\nНарушений не выявлено.',
       },
       {
-        path: '/notes/reader-guide.txt',
+        path: 'notes/reader-guide.txt',
         content: 'Инструкция для исследователей по заказу архивных описей и электронных копий.',
       },
     ]);
@@ -103,7 +99,7 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
         <p className="text-xs text-slate-500 mt-0.5">
           {isMedium
             ? 'Настройте тексты портала, синтетические пароли и эмулируемую файловую систему (Fake-FS)'
-            : 'Настройте видимые тексты каталога архива и параметры маскировки процессов'}
+            : 'Настройте видимые тексты каталога архива'}
         </p>
       </div>
 
@@ -314,9 +310,12 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
                       required
                       value={file.path}
                       onChange={(e) => handleUpdateFile(idx, { path: e.target.value })}
-                      placeholder="/documents/regulations/rules.txt"
+                      placeholder="documents/regulations/rules.txt"
+                      aria-label={`Путь файла ${idx + 1}`}
+                      aria-invalid={!!errors[`fake_fs[${idx}].path`]}
                       className="flex-1 px-2.5 py-1 text-xs font-mono border border-slate-300 rounded bg-white"
                     />
+                    {errors[`fake_fs[${idx}].path`] && <span className="text-rose-700 text-xs">{errors[`fake_fs[${idx}].path`]}</span>}
                     <button
                       type="button"
                       onClick={() => handleRemoveFile(idx)}
@@ -331,6 +330,7 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
                     rows={2}
                     value={file.content}
                     onChange={(e) => handleUpdateFile(idx, { content: e.target.value })}
+                    aria-label={`Содержимое файла ${idx + 1}`}
                     placeholder="Содержимое эмулируемого документа..."
                     className="w-full px-2.5 py-1 text-xs font-mono border border-slate-300 rounded bg-white"
                   />
@@ -341,70 +341,7 @@ export const Step3BehaviorData: React.FC<Step3Props> = ({
         </div>
       )}
 
-      {/* Masking Configuration Section */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-4">
-        <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide pb-2 border-b border-slate-100">
-          Параметры маскировки хоста (Host Masking & Deception)
-        </h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Дрожание задержки (Jitter)
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer mt-1">
-              <input
-                type="checkbox"
-                checked={masking.jitter_enabled}
-                onChange={(e) => setMasking({ ...masking, jitter_enabled: e.target.checked })}
-                className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-              />
-              <span className="text-xs text-slate-700">Включить джиттер</span>
-            </label>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Мин. задержка (сек)
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={masking.min_jitter_sec}
-              onChange={(e) => setMasking({ ...masking, min_jitter_sec: Number(e.target.value) })}
-              className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-lg"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Макс. задержка (сек)
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={120}
-              value={masking.max_jitter_sec}
-              onChange={(e) => setMasking({ ...masking, max_jitter_sec: Number(e.target.value) })}
-              className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-lg"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Имя процесса в ОС
-            </label>
-            <input
-              type="text"
-              value={masking.hidden_service_name}
-              onChange={(e) => setMasking({ ...masking, hidden_service_name: e.target.value })}
-              placeholder="systemd-timesyncd-worker"
-              className="w-full px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-lg"
-            />
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

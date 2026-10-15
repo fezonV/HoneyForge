@@ -1,3 +1,4 @@
+import { validResponse } from './validation';
 import {
   AuthSession,
   Profile,
@@ -17,6 +18,9 @@ import {
   ProfileRevision,
   TrapCommand,
   RegistrationAttempt,
+  StoredEvent,
+  EventFilters,
+  SessionTimeline,
 } from './types';
 import {
   FIXTURE_OPERATOR,
@@ -72,6 +76,12 @@ export function setDevModeActive(active: boolean) {
 // CSRF token caching and retrieval
 let cachedCsrfToken: string | null = null;
 
+export function clearClientSession() {
+  cachedCsrfToken = null;
+  profileRevisionCache.clear();
+}
+
+
 export function setCachedCsrfToken(token: string | null) {
   cachedCsrfToken = token;
 }
@@ -89,13 +99,13 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {},
   timeoutMs: number = 10000,
-  responseType: 'json' | 'blob' = 'json'
+  responseType: 'json' | 'blob' | 'csv' = 'json'
 ): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers = new Headers(options.headers || {});
-  headers.set('Accept', 'application/json');
+  headers.set('Accept', responseType === 'csv' ? 'text/csv' : responseType === 'blob' ? 'application/zip' : 'application/json');
 
   const method = (options.method || 'GET').toUpperCase();
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
@@ -111,22 +121,24 @@ async function request<T>(
       ...options,
       headers,
       credentials: 'include', // Automatically passes hf_session and csrf_token cookies
-      signal: options.signal || controller.signal,
+      signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     });
 
     if (response.status === 204) {
-      return {} as T;
+      if (method === 'DELETE' || endpoint === '/api/v1/auth/logout') return {} as T;
+      throw new ApiRequestError('Сервер вернул пустой ответ вместо данных', 502, 'invalid_response');
     }
 
-    if (response.ok && responseType === 'blob') {
-      if (!response.headers.get('Content-Type')?.includes('application/zip')) {
-        throw new ApiRequestError('Сервер вернул некорректный комплект запуска', 502, 'invalid_bundle');
+    if (response.ok && responseType !== 'json') {
+      if (!response.headers.get('Content-Type')?.includes(responseType === 'csv' ? 'text/csv' : 'application/zip')) {
+        throw new ApiRequestError(responseType === 'csv' ? 'Сервер вернул некорректную выгрузку CSV' : 'Сервер вернул некорректный комплект запуска', 502, responseType === 'csv' ? 'invalid_response' : 'invalid_bundle');
       }
       return await response.blob() as T;
     }
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
+      if (response.status === 401) clearClientSession();
       if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/me')) {
         window.dispatchEvent(new CustomEvent('honeyforge-session-expired'));
       }
@@ -139,13 +151,14 @@ async function request<T>(
       if (data && typeof data === 'object') {
         const errResp = data as BackendApiErrorResponse;
         if (errResp.error) {
-          message = errResp.error.message || message;
-          code = errResp.error.code || code;
-          field_errors = errResp.error.fields;
-          request_id = errResp.error.request_id;
-        } else if ((data as any).message) {
+          message = typeof errResp.error.message === 'string' ? errResp.error.message : message;
+          code = typeof errResp.error.code === 'string' ? errResp.error.code : code;
+          const fields = errResp.error.fields;
+          if (fields && typeof fields === 'object' && !Array.isArray(fields) && Object.values(fields).every((value) => typeof value === 'string')) field_errors = fields;
+          request_id = typeof errResp.error.request_id === 'string' ? errResp.error.request_id : undefined;
+        } else if (typeof (data as any).message === 'string') {
           message = (data as any).message;
-        } else if ((data as any).detail) {
+        } else if (typeof (data as any).detail === 'string') {
           message = typeof (data as any).detail === 'string' ? (data as any).detail : JSON.stringify((data as any).detail);
         }
       }
@@ -153,6 +166,9 @@ async function request<T>(
       throw new ApiRequestError(message, response.status, code, field_errors, false, request_id);
     }
 
+    if (!validResponse(endpoint, method, data)) {
+      throw new ApiRequestError('Сервер вернул ответ, не соответствующий контракту API', 502, 'invalid_response');
+    }
     return data as T;
   } catch (error: any) {
     if (error instanceof ApiRequestError) {
@@ -201,6 +217,12 @@ function mapTrap(t: any): Trap {
     deployment_bindings: t.deployment_bindings || [],
     created_at: t.created_at,
   };
+}
+
+function eventQuery(filters: EventFilters): URLSearchParams {
+  const query = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+  return query;
 }
 
 export const api = {
@@ -280,8 +302,11 @@ export const api = {
         return;
       }
 
-      await request<void>('/api/v1/auth/logout', { method: 'POST' });
-      setCachedCsrfToken(null);
+      try {
+        await request<void>('/api/v1/auth/logout', { method: 'POST' });
+      } finally {
+        clearClientSession();
+      }
     },
 
     async switchDevRole(role: 'operator' | 'viewer'): Promise<User> {
@@ -341,6 +366,15 @@ export const api = {
   },
 
   profiles: {
+    async sensitiveRevision(id: string, revision: number): Promise<ProfileRevision> {
+      if (isDevModeActive()) return api.profiles.revision(id, revision);
+      // Audited operator action. Never cache secrets in the shared revision cache.
+      const result = await request<ProfileRevision>(`/api/v1/profiles/${encodeURIComponent(id)}/revisions/${revision}/sensitive`);
+      if (result.sensitive_redacted !== false || result.profile_id !== id || result.revision !== revision) {
+        throw new ApiRequestError('Сервер не подтвердил чтение выбранной чувствительной версии', 502, 'invalid_response');
+      }
+      return result;
+    },
     async rotateCredentials(id: string, baseRevision: number, name: string, description: string, config: ProfileConfig): Promise<ProfileRevision> {
       const result = await request<{ revision: ProfileRevision }>(`/api/v1/profiles/${encodeURIComponent(id)}`, {
         method: 'PATCH', body: JSON.stringify({ base_revision: baseRevision, name, description, config }),
@@ -560,9 +594,116 @@ export const api = {
       };
     },
 
+    async patch(
+      id: string,
+      data: {
+        base_revision: number;
+        name: string;
+        description?: string;
+        config: ProfileConfig;
+      }
+    ): Promise<{ profile: Profile; revision: ProfileRevision }> {
+      if (isDevModeActive()) {
+        await new Promise((r) => setTimeout(r, 250));
+        const found = mockProfiles.find((p) => p.id === id);
+        if (!found) throw new ApiRequestError('Профиль не найден', 404, 'not_found');
+
+        if (data.base_revision !== found.revision) {
+          throw new ApiRequestError(
+            'Профиль был изменён другим пользователем',
+            409,
+            'revision_conflict',
+            { current_revision: String(found.revision) }
+          );
+        }
+
+        found.revision += 1;
+        found.name = data.name;
+        found.description = data.description || '';
+        found.level = data.config.level as InteractionLevel;
+        found.services = data.config.services;
+        found.config = data.config;
+        found.updated_at = new Date().toISOString();
+
+        const newRev: ProfileRevision = {
+          profile_id: id,
+          revision: found.revision,
+          config: data.config,
+          created_at: new Date().toISOString(),
+          created_by: 'operator',
+          sensitive_redacted: true,
+        };
+
+        const key = `${id}:${found.revision}`;
+        profileRevisionCache.set(key, newRev);
+
+        return { profile: found, revision: newRev };
+      }
+
+      const res = await request<any>(`/api/v1/profiles/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          base_revision: data.base_revision,
+          name: data.name,
+          description: data.description || '',
+          config: data.config,
+        }),
+      });
+
+      const prof = res.profile || res;
+      const key = `${id}:${res.revision?.revision || prof.current_revision}`;
+      if (res.revision) {
+        profileRevisionCache.set(key, res.revision);
+      }
+
+      return {
+        profile: {
+          id: prof.id,
+          name: prof.name,
+          description: prof.description || '',
+          level: (res.revision?.config?.level || prof.level || 'low') as InteractionLevel,
+          revision: res.revision?.revision || prof.current_revision || 1,
+          services: res.revision?.config?.services || [],
+          masking: {
+            jitter_enabled: true,
+            min_jitter_sec: 2,
+            max_jitter_sec: 8,
+            decoy_path: '/static/bundle.js',
+            hidden_service_name: 'systemd-timesyncd-worker',
+          },
+          config: res.revision?.config,
+          created_at: prof.created_at,
+          updated_at: prof.updated_at,
+          traps_count: 0,
+        },
+        revision: res.revision,
+      };
+    },
+
+    async copy(source: Profile, newName?: string): Promise<Profile> {
+      const copyName = newName || `${Array.from(source.name).slice(0, 24).join('')} (копия)`;
+      const cfg = (await api.profiles.sensitiveRevision(source.id, source.revision)).config;
+      return api.profiles.create({
+        name: copyName,
+        description: source.description || 'Копия профиля приманки',
+        level: source.level,
+        services: source.services,
+        masking: source.masking,
+        config: cfg,
+      });
+    },
+
     async delete(id: string): Promise<void> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 250));
+        const assignedTrap = mockTraps.find((t) => t.desired_profile_id === id || t.profile_id === id);
+        if (assignedTrap) {
+          throw new ApiRequestError(
+            'Нельзя удалить профиль: он назначен на активные ловушки',
+            409,
+            'profile_assigned'
+          );
+        }
         mockProfiles = mockProfiles.filter((p) => p.id !== id);
         return;
       }
@@ -725,6 +866,18 @@ export const api = {
   },
 
   events: {
+    async page(filters: EventFilters = {}): Promise<Page<StoredEvent>> {
+      return request<Page<StoredEvent>>(`/api/v1/events?${eventQuery(filters)}`);
+    },
+    async detail(trapId: string, eventId: string, sensitive = false): Promise<StoredEvent> {
+      return request<StoredEvent>(`/api/v1/traps/${encodeURIComponent(trapId)}/events/${encodeURIComponent(eventId)}${sensitive ? '/sensitive' : ''}`);
+    },
+    async timeline(sessionId: string, cursor?: string): Promise<SessionTimeline> {
+      return request<SessionTimeline>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/timeline?${eventQuery({ cursor })}`);
+    },
+    async exportCsv(filters: EventFilters = {}): Promise<Blob> {
+      return request<Blob>(`/api/v1/events/export.csv?${eventQuery(filters)}`, {}, 30000, 'csv');
+    },
     async list(params: { limit?: number; trap_id?: string; severity?: string } = {}): Promise<AttackEvent[]> {
       if (isDevModeActive()) {
         await new Promise((r) => setTimeout(r, 200));

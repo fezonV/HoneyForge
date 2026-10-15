@@ -33,6 +33,10 @@ export const Step1TemplateLevel: React.FC<Step1Props> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Low HTTP Card */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={templateId === 'low-http'}
+          onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setTemplateId('low-http'); } } }
           onClick={() => setTemplateId('low-http')}
           className={`cursor-pointer rounded-xl border p-4 transition-all ${
             templateId === 'low-http'
@@ -69,6 +73,10 @@ export const Step1TemplateLevel: React.FC<Step1Props> = ({
 
         {/* Medium HTTP Card */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={templateId === 'medium-http'}
+          onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setTemplateId('medium-http'); } } }
           onClick={() => setTemplateId('medium-http')}
           className={`cursor-pointer rounded-xl border p-4 transition-all ${
             templateId === 'medium-http'

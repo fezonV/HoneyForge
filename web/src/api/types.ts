@@ -108,6 +108,13 @@ export interface CreateProfileRequest {
   config: ProfileConfig;
 }
 
+export interface PatchProfileRequest {
+  base_revision: number;
+  name: string;
+  description: string;
+  config: ProfileConfig;
+}
+
 
 export interface DeploymentBinding {
   service_id: string;
@@ -257,4 +264,33 @@ export interface ApiErrorDetail {
 
 export interface BackendApiErrorResponse {
   error: ApiErrorDetail;
+}
+
+// Persisted event API; these types do not invent severity or current-profile data.
+export interface EventFilters {
+  trap_id?: string;
+  from?: string;
+  to?: string;
+  source_ip?: string;
+  event_type?: string;
+  session_id?: string;
+  cursor?: string;
+  limit?: number;
+}
+export interface StoredEvent {
+  event_id: string;
+  trap_id: string;
+  event_type: string;
+  timestamp: string;
+  protocol: string;
+  session_id?: string;
+  profile_id?: string;
+  applied_revision?: number;
+  payload?: Record<string, unknown> | null;
+  payload_redacted?: boolean;
+}
+export interface SessionTimeline {
+  session: { id: string; trap_id: string; started_at: string; ended_at?: string };
+  items: StoredEvent[];
+  next_cursor?: string;
 }

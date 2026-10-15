@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef, useId } from 'react';
+import { useDialogFocus } from './useDialogFocus';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -21,24 +22,8 @@ export const Modal: React.FC<ModalProps> = ({
   maxWidth = 'md',
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      window.addEventListener('keydown', handleKeyDown);
-    }
-
-    return () => {
-      document.body.style.overflow = 'unset';
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, onClose]);
+  const titleId = useId();
+  useDialogFocus(modalRef, isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -52,17 +37,17 @@ export const Modal: React.FC<ModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in"
+      ref={modalRef}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
     >
       <div
-        ref={modalRef}
         className={`bg-white rounded-xl shadow-xl border border-slate-200 w-full ${maxWidthClass} flex flex-col overflow-hidden animate-in zoom-in-95`}
       >
         <div className="flex items-center justify-between p-5 border-b border-slate-100">
           <div>
-            <h3 id="modal-title" className="text-lg font-semibold text-slate-900">
+            <h3 id={titleId} className="text-lg font-semibold text-slate-900">
               {title}
             </h3>
             {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}

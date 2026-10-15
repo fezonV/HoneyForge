@@ -9,7 +9,9 @@ const commandId = '33333333-3333-4333-8333-333333333333';
 async function setup(page) {
   const connections = [];
   const now = new Date().toISOString();
-  const config = { level: 'low', services: [{ id: 'web', port: 18080, protocol: 'http', name: 'Архив' }] };
+  const config = { template_id: 'low-http', level: 'low', services: [{ id: 'web', port: 18080, protocol: 'http', name: 'Архив' }],
+    visible_texts: { title: 'Архив', login_prompt: '', success: '', failure: '' }, synthetic_credentials: [], fake_fs: [],
+    logging: { categories: ['http.request', 'connection.opened'] }, channel: { tls_required: true, heartbeat_seconds: 5, sync_seconds: 2 } };
   const state = {
     trap: { id: trapId, name: 'Realtime trap', desired_profile_id: profileId, desired_revision: 1,
       applied_profile_id: null, applied_revision: null, agent_status: 'online', service_status: 'unknown',
