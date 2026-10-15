@@ -30,7 +30,11 @@ const trap = object({
 const command = object({ id: text, trap_id: text, type: oneOf('start', 'stop', 'apply_profile'),
   status: oneOf('queued', 'delivered', 'applied', 'failed', 'expired'), created_at: text, expires_at: text });
 const event = object({ event_id: text, timestamp: text, trap_id: text, event_type: text, protocol: text,
-  source_ip: optional(text), source_port: optional(number), destination_port: optional(number), payload: optional(record) });
+  source_ip: optional(text), source_port: optional(number), destination_port: optional(number), payload: optional(record),
+  agent_id: optional(text), service_id: optional(text), received_at: optional(text),
+  profile_id: optional(text), applied_revision: optional(number), session_id: optional(text), payload_redacted: optional(bool),
+  source_country_code: optional(text), source_country_name: optional(text), source_asn: optional(number), source_asn_org: optional(text),
+  geo_source: optional(text), geo_version: optional(text) });
 const audit = object({ id: text, created_at: text, action: text, entity_type: text, actor_id: optional(text), entity_id: optional(text) });
 
 // Validate the wire format before mapping it into UI models. Unknown properties

@@ -6,6 +6,7 @@ export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
 export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [revision, setRevision] = useState(0);
+  const [eventRevision, setEventRevision] = useState(0);
 
   useEffect(() => {
     if (!enabled) { setStatus('disconnected'); return; }
@@ -13,6 +14,7 @@ export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
     let socket: WebSocket | null = null;
     let retry: number | undefined;
     let reconcile: number | undefined;
+    let eventReconcile: number | undefined;
     let attempts = 0;
 
     const invalidate = () => {
@@ -34,6 +36,7 @@ export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
         attempts = 0;
         setStatus('connected');
         invalidate(); // Includes changes missed during a disconnect.
+        invalidateEvents();
       };
       connection.onmessage = (event) => {
         if (stopped || typeof event.data !== 'string' || event.data.length > 65536) return;
@@ -41,6 +44,8 @@ export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
           const message: unknown = JSON.parse(event.data);
           if (message && typeof message === 'object' && 'type' in message &&
             (message.type === 'trap.status_changed' || message.type === 'command.updated')) invalidate();
+          if (message && typeof message === 'object' && 'type' in message &&
+            (message.type === 'event.created' || message.type === 'session.updated')) invalidateEvents();
         } catch { /* Ignore malformed notifications; REST polling still reconciles state. */ }
       };
       connection.onclose = () => {
@@ -53,6 +58,14 @@ export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
       };
       connection.onerror = () => connection.close();
     };
+    // Store no notification payloads. At most one invalidation is pending per batch.
+    const invalidateEvents = () => {
+      if (eventReconcile !== undefined) return;
+      eventReconcile = window.setTimeout(() => {
+        eventReconcile = undefined;
+        if (!stopped) setEventRevision((value) => value + 1);
+      }, 150);
+    };
     const online = () => { window.clearTimeout(retry); connect(); };
     const offline = () => { window.clearTimeout(retry); socket?.close(); setStatus('disconnected'); };
     connect();
@@ -62,11 +75,12 @@ export function useTrapRealtime(enabled: boolean, sessionKey?: string) {
       stopped = true;
       window.clearTimeout(retry);
       window.clearTimeout(reconcile);
+      window.clearTimeout(eventReconcile);
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       socket?.close();
     };
   }, [enabled, sessionKey]);
 
-  return { status, revision };
+  return { status, revision, eventRevision };
 }
