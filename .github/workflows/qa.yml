@@ -83,7 +83,7 @@ jobs:
         working-directory: web
         run: npx playwright install --with-deps chromium
       - name: Run browser smoke
-        run: npm --prefix web run test:e2e -- e2e/api-contract.spec.mjs e2e/trap-realtime.spec.mjs e2e/trap-control.spec.mjs e2e/profile-preview.spec.mjs
+        run: npm --prefix web run test:e2e -- e2e/api-contract.spec.mjs e2e/trap-realtime.spec.mjs e2e/trap-control.spec.mjs e2e/profile-preview.spec.mjs e2e/events.spec.mjs e2e/dashboard-audit.spec.mjs
       - name: Upload browser artifacts
         if: always()
         uses: actions/upload-artifact@v4
