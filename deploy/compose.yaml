@@ -32,7 +32,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/control_database_url
       LISTEN_ADDR: 0.0.0.0:8081
       PUBLIC_ORIGIN: https://${PUBLIC_HOST:?Set PUBLIC_HOST}:${MANAGEMENT_PORT:-8443}
-      AGENT_ORIGIN: https://${PUBLIC_HOST}:${AGENT_PORT:-9443}
+      AGENT_ORIGIN: https://${AGENT_HOST:-${PUBLIC_HOST}}:${AGENT_PORT:-9443}
       COOKIE_SECURE: "true"
       GEOIP_CITY_DB: ${GEOIP_CITY_DB:-}
       GEOIP_ASN_DB: ${GEOIP_ASN_DB:-}

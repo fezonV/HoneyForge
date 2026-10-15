@@ -6,6 +6,11 @@ cd "$(dirname "$0")/.."
 : "${HF_AGENT_URL:?Set the HTTPS agent origin}"
 : "${HF_CA_FILE:?Set the trusted CA file}"
 case "$HF_OPERATOR_URL $HF_AGENT_URL" in https://*' https://'*) ;; *) echo 'HTTPS origins required' >&2; exit 1;; esac
+# Private lab CAs often publish no CRL. Schannel should still validate the CA
+# and hostname; reject known revocation but tolerate absent revocation metadata.
+case "$(curl --version)" in
+    *Schannel*) curl() { command curl --ssl-revoke-best-effort "$@"; } ;;
+esac
 compose() { docker compose --env-file deploy/.env -f deploy/compose.yaml "$@"; }
 compose config --quiet
 compose ps
@@ -38,6 +43,13 @@ code=$(curl --silent --show-error --cacert "$HF_CA_FILE" --max-time 15 \
     -w '%{http_code}' "${HF_AGENT_URL%/}/agent/v1/traps/00000000-0000-0000-0000-000000000000/config")
 [ "$code" = 404 ] || { echo 'Invalid credentials exposed agent API' >&2; exit 1; }
 grep -qi '<html' "$work/body"
+for payload in '{' '{}' '{"trap_id":"00000000-0000-0000-0000-000000000000","token":"invalid"}'; do
+    code=$(curl --silent --show-error --cacert "$HF_CA_FILE" --max-time 15 \
+        -H 'Content-Type: application/json' --data "$payload" -o "$work/body" \
+        -w '%{http_code}' "${HF_AGENT_URL%/}/agent/v1/enroll")
+    [ "$code" = 404 ] || { echo 'Enrollment failure exposed agent API' >&2; exit 1; }
+    grep -qi '<html' "$work/body"
+done
 # Wrong trust must fail before any HTTP response. Keep hostname verification on.
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=untrusted-probe' \
     -keyout "$work/key" -out "$work/wrong-ca.pem" >/dev/null 2>&1
