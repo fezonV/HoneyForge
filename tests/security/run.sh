@@ -19,7 +19,10 @@ printf 'postgres://honeyforge:%s@postgres:5432/honeyforge?sslmode=disable' "$qa_
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$qa_dir/tls.key" -out "$qa_dir/tls.crt" -subj /CN=localhost -addext subjectAltName=IP:127.0.0.1 > /dev/null 2>&1
 # File-secret mounts use the nginx UID 101; parent temporary directory stays 0700.
 chmod 444 "$qa_dir/tls.key" "$qa_dir/tls.crt" "$qa_dir/postgres_password" "$qa_dir/database_url"
+cp deploy/nginx.conf "$qa_dir/nginx.conf"
+chmod 444 "$qa_dir/nginx.conf"
 cat > "$qa_dir/env" <<EOF
+QA_NGINX_CONFIG=$qa_dir/nginx.conf
 PUBLIC_HOST=127.0.0.1
 MANAGEMENT_PORT=$qa_operator_port
 AGENT_PORT=$qa_agent_port
@@ -31,7 +34,16 @@ GEOIP_DATA_DIR=$qa_dir/geoip
 EOF
 cat > "$qa_dir/overlay.yaml" <<'EOF'
 services:
+  nginx:
+    volumes:
+      - ${QA_NGINX_CONFIG}:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      interval: 2s
   control:
+    # BusyBox wget ignores NO_PROXY; this probe addresses only its own loopback.
+    healthcheck:
+      test: [CMD-SHELL, 'wget -Y off -q -O /dev/null http://127.0.0.1:8081/readyz || exit 1']
+      interval: 2s
     environment:
       NO_PROXY: 127.0.0.1,localhost,postgres,control,nginx
       no_proxy: 127.0.0.1,localhost,postgres,control,nginx

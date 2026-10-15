@@ -52,8 +52,9 @@ commit. Проверяется множество `event_id`, глубина о�
 Run the complete Linux gate with `scripts/test-qa.sh` (no `-short`, real process
 flag enabled). The short QA script includes the PostgreSQL foundation tests for
 filters/cursors. Both outage tests compare exact locally acknowledged IDs with
-PostgreSQL IDs. The 60-second outage simulates HTTP 503, closes/reopens the
-SQLite queue and loses a post-commit response; it is not a physical network
+PostgreSQL IDs. The 60-second outage drives 100 real HTTP requests through decoy and HTTP IPC,
+simulates management HTTP 503, closes/reopens the SQLite queue at 30 seconds
+and loses a post-commit response; it is not a physical network
 partition or a PostgreSQL process restart. The agent crash test uses a real
 process with a controlled TLS endpoint, while live Playwright uses actual
 control/agents/decoys/PostgreSQL.

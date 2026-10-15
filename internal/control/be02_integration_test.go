@@ -1,12 +1,12 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -108,22 +108,52 @@ func TestBE02SixtySecondOutageRestartAndLostCommitACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = q.Close() }()
+
+	var ipcHandler atomic.Value
+	ipcHandler.Store(agent.IPCHandler(q, state, "ipc-secret"))
+	ipc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { ipcHandler.Load().(http.Handler).ServeHTTP(w, r) }))
+	defer ipc.Close()
+	sink, err := decoy.NewHTTPAgentSink(ipc.URL, "ipc-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := &qa02MeasuredSink{next: sink, ids: map[string]bool{}}
+	cfg := profileConfig()
+	cfg.TemplateID = "low-http"
+	cfg.Level = "low"
+	cfg.SyntheticCredentials = nil
+	cfg.Logging.Categories = []string{"http.request"}
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(ctx, `UPDATE profile_revisions SET config=$1 WHERE profile_id=$2 AND revision=1`, cfgJSON, profileID); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := decoy.New(decoy.Configuration{TrapID: state.TrapID, ProfileID: profileID, Revision: 1, Config: cfg}, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.SetRunning(true)
+	public := httptest.NewServer(runtime.PublicHandler("web"))
+	defer public.Close()
 	started := time.Now()
-	expected := map[string]bool{}
+
 	for half := 0; half < 2; half++ {
-		ipc := agent.IPCHandler(q, state, "ipc-secret")
+
 		for i := 0; i < 50; i++ {
-			event := be03Event(uuid(), state.TrapID, state.AgentID, profileID, "", 1, "http.request", time.Now().UTC().Format(time.RFC3339Nano))
-			expected[event.EventID] = true
-			body, _ := json.Marshal(event)
-			req := httptest.NewRequest("POST", "/v1/events", bytes.NewReader(body))
-			req.Header.Set("Authorization", "Bearer ipc-secret")
-			res := httptest.NewRecorder()
-			ipc.ServeHTTP(res, req)
-			if res.Code != 202 {
-				t.Fatalf("local event ACK=%d %s", res.Code, res.Body.String())
+			<-time.After(time.Until(started.Add(time.Duration(half*50+i) * 600 * time.Millisecond)))
+			response, err := public.Client().Get(public.URL + "/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, readErr := io.Copy(io.Discard, response.Body)
+			response.Body.Close()
+			if response.StatusCode != 200 || readErr != nil {
+				t.Fatalf("HTTP action status=%d err=%v", response.StatusCode, readErr)
 			}
 		}
+
 		if err = q.Flush(ctx, client, state, 100, nil); err == nil {
 			t.Fatal("management outage unexpectedly delivered events")
 		}
@@ -136,6 +166,7 @@ func TestBE02SixtySecondOutageRestartAndLostCommitACK(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			ipcHandler.Store(agent.IPCHandler(q, state, "ipc-secret"))
 			if depth, err := q.Depth(ctx); err != nil || depth != 50 {
 				t.Fatalf("restart depth=%d err=%v", depth, err)
 			}
@@ -168,6 +199,13 @@ func TestBE02SixtySecondOutageRestartAndLostCommitACK(t *testing.T) {
 	if depth, err := q.Depth(ctx); err != nil || depth != 0 {
 		t.Fatalf("recovered depth=%d err=%v", depth, err)
 	}
+
+	observed.mu.Lock()
+	expected := observed.ids
+	if len(expected) != 100 {
+		t.Errorf("locally ACKed IDs=%d, want 100", len(expected))
+	}
+	observed.mu.Unlock()
 	rows, err := db.Query(ctx, `SELECT id::text FROM events WHERE agent_id=$1`, state.AgentID)
 	if err != nil {
 		t.Fatal(err)

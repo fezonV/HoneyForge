@@ -10,7 +10,10 @@ removes only this project's containers, networks and volumes.
 `qa-security.log` contains safe outcomes and service logs. Credentials, private
 keys and private response bodies are never copied to the report. File-secret
 sources are readable by the service UIDs inside a private temporary directory.
-The optional managed-environment CA is supplied via a BuildKit secret.
+The optional managed-environment CA is supplied via a BuildKit secret. The
+public nginx configuration is copied with explicit service-readable permissions;
+the local healthcheck uses wget -Y off for loopback because BusyBox ignores
+NO_PROXY. External build/runtime traffic still uses the configured proxy.
 
 The command fails when any measured criterion fails. It is a separate deployment
 acceptance gate, not part of the passing API/unit CI gate. On the integrated dev
