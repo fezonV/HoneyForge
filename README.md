@@ -144,6 +144,11 @@ API предоставляет `/healthz`, `/readyz`, `/api/v1` для опер�
 Проверки QA-03 для MASK-1–4, TLS, сегмента управления, секретов и интерфейсов
 описаны в [docs/QA03_ACCEPTANCE.md](docs/QA03_ACCEPTANCE.md) и запускаются
 через `./scripts/test-qa03.ps1` на отдельной PostgreSQL-базе.
+QA-04 запускает обязательные CI, schema, Compose health и Playwright smoke
+проверки. Матрица и воспроизводимый runbook находятся в
+[docs/QA04_ACCEPTANCE.md](docs/QA04_ACCEPTANCE.md), [docs/acceptance.md](docs/acceptance.md)
+и [docs/demo.md](docs/demo.md).
+
 ## Что готово в текущем прототипе
 
 - `main.go` запускает HTTP-сервер, встраивает HTML-страницы и хранит последние 100 событий в потокобезопасном журнале.
