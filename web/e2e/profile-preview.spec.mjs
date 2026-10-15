@@ -115,7 +115,7 @@ test('wizard preview follows form edits and reset without saving or deploying', 
 test('standalone TL-01 preview keeps its dated fixtures and navigation', async ({ page }) => {
   const { spawn } = await import('node:child_process');
   const { resolve } = await import('node:path');
-  const server = spawn('python3', ['-u', '-m', 'http.server', '0', '--bind', '127.0.0.1', '--directory', resolve(import.meta.dirname, '../../tools/decoy-lab')], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const server = spawn(process.env.HF_TEST_PYTHON || 'python3', ['-u', '-m', 'http.server', '0', '--bind', '127.0.0.1', '--directory', resolve(import.meta.dirname, '../../tools/decoy-lab')], { stdio: ['ignore', 'pipe', 'ignore'] });
   try {
     const port = await new Promise((done, reject) => {
       server.once('error', reject);

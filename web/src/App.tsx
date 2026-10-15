@@ -68,7 +68,7 @@ const MainLayout: React.FC = () => {
         {currentTab === 'overview' && <OverviewScreen />}
         {currentTab === 'profiles' && <ProfilesScreen />}
         {currentTab === 'traps' && <TrapsScreen realtimeRevision={realtime.revision} />}
-        {currentTab === 'events' && <EventsScreen />}
+        {currentTab === 'events' && <EventsScreen key={`${user?.id}:${role}:${isDevMode}`} eventRevision={realtime.eventRevision} connectionStatus={realtime.status} />}
         {currentTab === 'audit' && <AuditScreen />}
       </main>
 

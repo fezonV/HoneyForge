@@ -283,9 +283,21 @@ export interface StoredEvent {
   event_type: string;
   timestamp: string;
   protocol: string;
-  session_id?: string;
-  profile_id?: string;
-  applied_revision?: number;
+  agent_id?: string;
+  service_id?: string;
+  received_at?: string;
+  source_ip?: string | null;
+  source_port?: number | null;
+  destination_port?: number | null;
+  source_country_code?: string;
+  source_country_name?: string;
+  source_asn?: number;
+  source_asn_org?: string;
+  geo_source?: string;
+  geo_version?: string;
+  session_id?: string | null;
+  profile_id?: string | null;
+  applied_revision?: number | null;
   payload?: Record<string, unknown> | null;
   payload_redacted?: boolean;
 }

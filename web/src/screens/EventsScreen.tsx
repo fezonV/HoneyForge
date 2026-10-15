@@ -1,286 +1,105 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  Filter,
-  Download,
-  Search,
-  RefreshCw,
-  ChevronRight,
-} from 'lucide-react';
-import { AttackEvent } from '../api/types';
-import { api } from '../api/client';
-import { useNotification } from '../context/NotificationContext';
-import { LevelBadge, SeverityBadge } from '../components/common/Badge';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { api, isDevModeActive } from '../api/client';
+import { ConnectionStatus } from '../api/realtime';
+import { EventFilters, StoredEvent, Trap } from '../api/types';
+import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/common/Button';
-import { AttackInspector } from '../components/common/AttackInspector';
-import { LoadingSkeleton, ErrorState, EmptyState } from '../components/common/StateViews';
+import { EventTable } from '../components/events/EventTable';
+import { EventDetails } from '../components/events/EventDetails';
+import { SessionTimeline } from '../components/events/SessionTimeline';
+import { eventTypes, FILTER_KEYS, getEventSearch, navigateEvents, readFilters } from '../components/events/eventView';
+import { useEventFeed } from '../components/events/useEventFeed';
 
-export const EventsScreen: React.FC = () => {
-  const { notify } = useNotification();
-  const [events, setEvents] = useState<AttackEvent[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<AttackEvent | null>(null);
+const dateInput = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().slice(0, 19) : '';
+const inputClass = 'block w-full border border-slate-300 rounded p-2 mt-1 text-sm';
+const utcValue = (value: string) => value ? new Date(`${value}Z`).toISOString() : '';
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [severityFilter, setSeverityFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [trapFilter, setTrapFilter] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('trap_id') || '');
+export const EventsScreen = ({ eventRevision = 0, connectionStatus = 'disconnected' }: {
+  eventRevision?: number; connectionStatus?: ConnectionStatus;
+}) => {
+  const { user, role } = useAuth();
+  const [search, setSearch] = useState(getEventSearch);
+  const params = useMemo(() => new URLSearchParams(search), [search]);
+  const filterKey = JSON.stringify(readFilters(params));
+  // A stable object prevents detail navigation from restarting the event-page request.
+  const filters = useMemo(() => JSON.parse(filterKey) as EventFilters, [filterKey]);
+  const cursor = params.get('cursor') || '';
+  const eventId = params.get('event_id') || '';
+  const eventTrap = params.get('event_trap') || filters.trap_id || '';
+  const sessionId = params.get('timeline_id') || '';
+  const sessionTrap = params.get('timeline_trap') || '';
+  const timelineCursor = params.get('timeline_cursor') || '';
+  const [draft, setDraft] = useState<EventFilters>(filters);
+  const [validationError, setValidationError] = useState('');
+  const [paused, setPaused] = useState(false);
+  const [traps, setTraps] = useState<Trap[]>([]);
+  const frozen = paused || !!cursor || !!eventId || !!sessionId;
+  const feed = useEventFeed(filters, cursor, frozen, eventRevision);
+  const names = useMemo(() => new Map(traps.map((trap) => [trap.id, trap.name])), [traps]);
 
   useEffect(() => {
-    const sync = () => setTrapFilter(new URLSearchParams(window.location.hash.split('?')[1] || '').get('trap_id') || '');
+    const sync = () => setSearch(getEventSearch());
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
-
-  const fetchEvents = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await api.events.list({
-        severity: severityFilter === 'all' ? undefined : severityFilter,
-        trap_id: trapFilter || undefined,
-      });
-      setEvents(data);
-    } catch (err: any) {
-      setError(err.message || 'Ошибка загрузки журнала событий');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [severityFilter, trapFilter]);
-
+  useEffect(() => { setDraft(filters); setValidationError(''); }, [filters]);
   useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+    let active = true;
+    api.traps.list().then((items) => { if (active) setTraps(items); }).catch(() => { /* IDs remain available if the registry is unavailable. */ });
+    return () => { active = false; };
+  }, []);
 
-  // Export IoC CSV
-  const handleExportIoc = () => {
-    if (events.length === 0) {
-      notify('warning', 'Экспорт IoC', 'Нет событий для формирования выгрузки');
-      return;
-    }
-
-    const headers = ['Timestamp', 'Source_IP', 'Port', 'Protocol', 'Trap', 'Event_Type', 'Severity', 'IoC_Flags'];
-    const rows = events.map((e) => [
-      e.occurred_at,
-      e.source_ip,
-      e.destination_port,
-      e.protocol,
-      `"${e.trap_name.replace(/"/g, '""')}"`,
-      e.event_type,
-      e.severity,
-      `"${(e.ioc_flags || []).join(';')}"`,
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `honeyforge-ioc-export-${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    notify('success', 'Экспорт завершен', `Выгружено индикаторов IoC: ${events.length}`);
+  const navigate = (changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(changes)) { if (value) next.set(key, value); else next.delete(key); }
+    navigateEvents(next);
   };
-
-  // Filtered in memory
-  const filteredEvents = events.filter((e) => {
-    if (trapFilter && e.trap_id !== trapFilter) return false;
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      const matchesIp = e.source_ip.toLowerCase().includes(query);
-      const matchesTrap = e.trap_name.toLowerCase().includes(query);
-      const matchesPayload =
-        (e.payload.username && e.payload.username.toLowerCase().includes(query)) ||
-        (e.payload.path && e.payload.path.toLowerCase().includes(query)) ||
-        (e.payload.command && e.payload.command.toLowerCase().includes(query));
-      if (!matchesIp && !matchesTrap && !matchesPayload) return false;
+  const apply = (event: FormEvent) => {
+    event.preventDefault();
+    if (draft.from && draft.to && Date.parse(draft.from) > Date.parse(draft.to)) {
+      setValidationError('Начало периода должно быть раньше его окончания.'); return;
     }
+    const query = new URLSearchParams();
+    for (const key of FILTER_KEYS) if (draft[key]?.trim()) query.set(key, draft[key]!.trim());
+    navigateEvents(query);
+    if (query.toString() === search) feed.refresh();
+  };
+  const fresh = () => {
+    navigate({ cursor: null });
+    if (!cursor) feed.refresh();
+  };
+  const selectEvent = (event: StoredEvent) => navigate({ event_id: event.event_id, event_trap: event.trap_id, timeline_id: null, timeline_trap: null, timeline_cursor: null });
 
-    if (typeFilter !== 'all' && e.event_type !== typeFilter) {
-      return false;
-    }
-
-    return true;
-  });
-
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Title & Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Журнал событий атак</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Полноразмерный аудит входящего трафика, инцидентов и IoC индикаторов (FR-C4)
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<Download className="w-3.5 h-3.5" />}
-            onClick={handleExportIoc}
-          >
-            Экспорт IoC (CSV)
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />}
-            onClick={fetchEvents}
-            disabled={isLoading}
-          >
-            Обновить
-          </Button>
-        </div>
-      </div>
-
-      {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-1 items-center gap-3 min-w-[280px]">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Поиск по IP, ловушке, пути или команде..."
-              className="w-full pl-9 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <span>Уровень риска:</span>
-            <select
-              value={severityFilter}
-              onChange={(e) => setSeverityFilter(e.target.value)}
-              className="px-2 py-1 border border-slate-300 rounded-md text-xs bg-white focus:outline-none"
-            >
-              <option value="all">Все</option>
-              <option value="critical">Атака (Critical)</option>
-              <option value="warning">Внимание (Warning)</option>
-              <option value="info">Инфо (Info)</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span>Тип:</span>
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="px-2 py-1 border border-slate-300 rounded-md text-xs bg-white focus:outline-none"
-            >
-              <option value="all">Все типы</option>
-              <option value="auth.attempt">Попытка входа</option>
-              <option value="http.request">HTTP Запрос</option>
-              <option value="command.exec">Выполнение команды</option>
-              <option value="port.scan">Сканирование портов</option>
-              <option value="file.read">Чтение файла</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {isLoading ? (
-        <LoadingSkeleton rows={6} />
-      ) : error ? (
-        <ErrorState message={error} onRetry={fetchEvents} />
-      ) : filteredEvents.length === 0 ? (
-        <EmptyState
-          title="События не найдены"
-          description="По заданным фильтрам событий не обнаружено"
-          actionText="Сбросить фильтры"
-          onAction={() => {
-            setSearchQuery('');
-            setSeverityFilter('all');
-            setTypeFilter('all');
-          }}
-        />
-      ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm" aria-label="Журнал событий атак">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  <th scope="col" className="px-5 py-3.5">Время UTC</th>
-                  <th scope="col" className="px-5 py-3.5">IP Источника</th>
-                  <th scope="col" className="px-5 py-3.5">Тип события</th>
-                  <th scope="col" className="px-5 py-3.5">Ловушка</th>
-                  <th scope="col" className="px-5 py-3.5">Полезная нагрузка (Payload)</th>
-                  <th scope="col" className="px-5 py-3.5">Серьезность</th>
-                  <th scope="col" className="px-5 py-3.5 text-right">Инспектор</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredEvents.map((evt) => {
-                  const utcTime = new Date(evt.occurred_at).toUTCString().replace('GMT', 'UTC');
-                  return (
-                    <tr
-                      key={evt.id}
-                      onClick={() => setSelectedEvent(evt)}
-                      className="hover:bg-slate-50/80 cursor-pointer transition-colors group"
-                    >
-                      <td className="px-5 py-4 font-mono text-xs text-slate-500 whitespace-nowrap">
-                        {utcTime}
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="font-mono font-medium text-slate-900 group-hover:text-brand-600">
-                          {evt.source_ip}
-                        </div>
-                        <div className="text-xs text-slate-400 font-mono">порт {evt.destination_port}</div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded text-slate-700">
-                          {evt.event_type}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="text-xs font-medium text-slate-800">{evt.trap_name}</div>
-                        <LevelBadge level={evt.level} />
-                      </td>
-                      <td className="px-5 py-4 max-w-xs">
-                        {evt.payload.command ? (
-                          <div className="font-mono text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded truncate">
-                            $ {evt.payload.command}
-                          </div>
-                        ) : evt.payload.username ? (
-                          <div className="text-xs text-amber-900 bg-amber-50 px-2 py-0.5 rounded font-mono truncate">
-                            usr: {evt.payload.username} / pass: {evt.payload.password || '***'}
-                          </div>
-                        ) : evt.payload.path ? (
-                          <div className="text-xs text-slate-700 font-mono truncate">
-                            {evt.payload.method || 'GET'} {evt.payload.path}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-slate-400 italic">Сетевое соединение</div>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        <SeverityBadge severity={evt.severity} />
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <span className="inline-flex items-center text-xs text-brand-600 font-medium group-hover:underline">
-                          Открыть <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Attack Inspector Modal */}
-      <AttackInspector event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+  return <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-5">
+    <div className="flex flex-wrap justify-between items-start gap-3">
+      <div><h1 className="text-2xl font-bold text-slate-900">Журнал событий атак</h1><p className="text-sm text-slate-500 mt-1">История действий посетителя из PostgreSQL. Время событий показано с часовым поясом.</p></div>
+      <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => { if (paused) fresh(); setPaused(!paused); }}>{paused ? 'Возобновить ленту' : 'Пауза ленты'}</Button><Button size="sm" disabled={feed.loading} onClick={fresh}>Обновить события</Button></div>
     </div>
-  );
+    {isDevModeActive() && <p role="alert" className="text-amber-800">Выбран демо-режим. Журнал запрашивает настоящий API; для проверки телеметрии войдите в режиме API.</p>}
+    <p role="status" className="text-sm text-slate-600">{connectionStatus === 'connected' ? 'WS подключён' : connectionStatus === 'connecting' ? 'WS подключается' : 'WS отключён. Доступны история REST и ручное обновление.'} · {frozen ? 'Читаемая страница зафиксирована' : 'Живая первая страница'}</p>
+    <form onSubmit={apply} className="bg-white border rounded-xl p-4 space-y-3" aria-label="Фильтры событий">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <label className="text-xs text-slate-600">Ловушка (trap_id)<input aria-label="Ловушка (trap_id)" list="event-traps" value={draft.trap_id || ''} onChange={(e) => setDraft({ ...draft, trap_id: e.target.value })} className={inputClass} placeholder="Все ловушки" /></label>
+        <datalist id="event-traps">{traps.map((trap) => <option key={trap.id} value={trap.id}>{trap.name}</option>)}</datalist>
+        <label className="text-xs text-slate-600">Начало периода (UTC)<input aria-label="Начало периода (UTC)" type="datetime-local" step="1" value={dateInput(draft.from)} onChange={(e) => setDraft({ ...draft, from: utcValue(e.target.value) })} className={inputClass} /></label>
+        <label className="text-xs text-slate-600">Окончание периода (UTC)<input aria-label="Окончание периода (UTC)" type="datetime-local" step="1" value={dateInput(draft.to)} onChange={(e) => setDraft({ ...draft, to: utcValue(e.target.value) })} className={inputClass} /></label>
+        <label className="text-xs text-slate-600">IP источника<input aria-label="IP источника" value={draft.source_ip || ''} onChange={(e) => setDraft({ ...draft, source_ip: e.target.value })} className={inputClass} placeholder="IPv4 или IPv6" /></label>
+        <label className="text-xs text-slate-600">Тип события<input aria-label="Тип события" list="event-types" value={draft.event_type || ''} onChange={(e) => setDraft({ ...draft, event_type: e.target.value })} className={inputClass} placeholder="Все типы" /></label>
+        <datalist id="event-types">{eventTypes.map((type) => <option key={type} value={type} />)}</datalist>
+        <label className="text-xs text-slate-600">Сессия (session_id)<input aria-label="Сессия (session_id)" value={draft.session_id || ''} onChange={(e) => setDraft({ ...draft, session_id: e.target.value })} className={inputClass} placeholder="Все сессии" /></label>
+      </div>
+      {validationError && <p role="alert" className="text-rose-700">{validationError}</p>}
+      <div className="flex gap-2"><Button size="sm" type="submit">Применить фильтры</Button><Button size="sm" type="button" variant="outline" onClick={() => navigateEvents(new URLSearchParams())}>Сбросить фильтры</Button></div>
+    </form>
+    {(feed.changed || feed.newCount > 0) && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex flex-wrap gap-3 items-center" role="status">
+      <p>Новых событий в начале выборки: {feed.newCount}{feed.overflow ? '+' : ''}. {feed.overflow ? 'Буфер ограничен; обновите выборку из REST.' : 'История могла измениться, включая более ранние события.'}</p><Button size="sm" onClick={fresh}>Показать новые события</Button>
+    </div>}
+    {feed.loading && <p role="status">Загрузка событий…</p>}
+    {feed.error && <div role="alert" className="border border-rose-200 bg-rose-50 rounded p-3 space-y-2"><p>{feed.error}</p>{feed.items.length > 0 && <p>Показан предыдущий снимок, актуальность не подтверждена.</p>}<Button size="sm" variant="outline" onClick={feed.refresh}>Повторить чтение событий</Button></div>}
+    {!feed.loading && !feed.error && feed.items.length === 0 && <p className="bg-white border rounded-xl p-6">События не найдены. Проверьте фильтры или выполните запрос к Low/Medium.</p>}
+    {feed.items.length > 0 && <EventTable events={feed.items} names={names} onSelect={selectEvent} />}
+    <div className="flex flex-wrap items-center gap-3 text-sm"><p>На странице: {feed.items.length} / 50.</p>{cursor && <Button size="sm" variant="outline" onClick={fresh}>К свежим событиям</Button>}<Button size="sm" disabled={feed.loading || !!feed.error || !feed.nextCursor} onClick={() => navigate({ cursor: feed.nextCursor })}>Более ранние события</Button></div>
+    {eventId && !sessionId && (eventTrap ? <EventDetails key={`${eventTrap}:${eventId}:${user?.id}:${role}`} trapId={eventTrap} eventId={eventId} onClose={() => navigate({ event_id: null, event_trap: null })} onTimeline={(id, trap) => navigate({ event_id: null, event_trap: null, timeline_id: id, timeline_trap: trap, timeline_cursor: null })} /> : <p role="alert">Для ссылки на детали требуется event_trap или trap_id.</p>)}
+    {sessionId && <SessionTimeline key={`${sessionId}:${sessionTrap}`} sessionId={sessionId} trapId={sessionTrap || undefined} cursor={timelineCursor} onCursor={(value) => navigate({ timeline_cursor: value })} onSelect={selectEvent} onClose={() => navigate({ timeline_id: null, timeline_trap: null, timeline_cursor: null })} />}
+  </div>;
 };

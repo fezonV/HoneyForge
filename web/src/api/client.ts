@@ -99,7 +99,8 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {},
   timeoutMs: number = 10000,
-  responseType: 'json' | 'blob' | 'csv' = 'json'
+  responseType: 'json' | 'blob' | 'csv' = 'json',
+  maxBytes?: number
 ): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -135,7 +136,28 @@ async function request<T>(
       }
       return await response.blob() as T;
     }
-    const data = await response.json().catch(() => null);
+    let data: unknown;
+    if (maxBytes && response.body) {
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          size += chunk.value.byteLength;
+          if (size > maxBytes) {
+            await reader.cancel();
+            throw new ApiRequestError('Ответ слишком большой. Payload пропущен; доступны метаданные события.', 413, 'payload_too_large');
+          }
+          chunks.push(chunk.value);
+        }
+      } finally { reader.releaseLock(); }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { data = null; }
+    } else data = await response.json().catch(() => null);
 
     if (!response.ok) {
       if (response.status === 401) clearClientSession();
@@ -866,14 +888,20 @@ export const api = {
   },
 
   events: {
-    async page(filters: EventFilters = {}): Promise<Page<StoredEvent>> {
-      return request<Page<StoredEvent>>(`/api/v1/events?${eventQuery(filters)}`);
+    async page(filters: EventFilters = {}, signal?: AbortSignal): Promise<Page<StoredEvent>> {
+      return request<Page<StoredEvent>>(`/api/v1/events?${eventQuery(filters)}`, { signal });
     },
-    async detail(trapId: string, eventId: string, sensitive = false): Promise<StoredEvent> {
-      return request<StoredEvent>(`/api/v1/traps/${encodeURIComponent(trapId)}/events/${encodeURIComponent(eventId)}${sensitive ? '/sensitive' : ''}`);
+    async detail(trapId: string, eventId: string, sensitive = false, signal?: AbortSignal): Promise<StoredEvent> {
+      const result = await request<StoredEvent>(`/api/v1/traps/${encodeURIComponent(trapId)}/events/${encodeURIComponent(eventId)}${sensitive ? '/sensitive' : ''}`, { signal }, 10000, 'json', 256 * 1024);
+      if (result.trap_id !== trapId || result.event_id !== eventId) throw new ApiRequestError('Сервер вернул другое событие', 502, 'invalid_response');
+      return result;
     },
-    async timeline(sessionId: string, cursor?: string): Promise<SessionTimeline> {
-      return request<SessionTimeline>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/timeline?${eventQuery({ cursor })}`);
+    async timeline(sessionId: string, cursor?: string, signal?: AbortSignal): Promise<SessionTimeline> {
+      const result = await request<SessionTimeline>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/timeline?${eventQuery({ cursor, limit: 50 })}`, { signal });
+      if (result.session.id !== sessionId || result.items.some((item) => item.trap_id !== result.session.trap_id || item.session_id !== sessionId)) {
+        throw new ApiRequestError('Сервер вернул события другой сессии или ловушки', 502, 'invalid_response');
+      }
+      return result;
     },
     async exportCsv(filters: EventFilters = {}): Promise<Blob> {
       return request<Blob>(`/api/v1/events/export.csv?${eventQuery(filters)}`, {}, 30000, 'csv');

@@ -26,6 +26,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request, serviceID, state, 
 		State: state, Message: message, SignedIn: signedIn,
 		Path: path, Body: body, Output: output}
 	if state == "file" {
+		view.Size = len(body)
 		view.DownloadURL = "/files?" + url.Values{"path": {path}, "download": {"1"}}.Encode()
 	}
 	for _, file := range cfg.Config.FakeFS {
