@@ -10,12 +10,16 @@ done
 state=secrets/egress-policy
 remove_policy() {
     [ -f "$state" ] || return 0
-    IFS=' ' read -r saved_chain saved_subnet < "$state"
+    IFS=' ' read -r saved_chain saved_subnet saved_bridge < "$state"
     case "$saved_chain" in HFBE04_[a-f0-9][a-f0-9]*) ;; *) echo 'Invalid saved chain' >&2; exit 1;; esac
     case "$saved_subnet" in *[!0-9./]*|'') echo 'Invalid saved subnet' >&2; exit 1;; esac
+    case "$saved_bridge" in *[!a-zA-Z0-9_.-]*) echo 'Invalid saved bridge' >&2; exit 1;; esac
     for parent in DOCKER-USER INPUT; do
         if iptables -w 5 -C "$parent" -s "$saved_subnet" -j "$saved_chain" 2>/dev/null; then
             iptables -w 5 -D "$parent" -s "$saved_subnet" -j "$saved_chain"
+        fi
+        if [ -n "$saved_bridge" ] && iptables -w 5 -C "$parent" -i "$saved_bridge" -j "$saved_chain" 2>/dev/null; then
+            iptables -w 5 -D "$parent" -i "$saved_bridge" -j "$saved_chain"
         fi
     done
     if iptables -w 5 -S "$saved_chain" >/dev/null 2>&1; then
@@ -46,12 +50,17 @@ done
 }
 subnet=$(docker network inspect --format '{{(index .IPAM.Config 0).Subnet}}' "$management")
 case "$subnet" in *[!0-9./]*|'') echo 'Expected an IPv4 management subnet' >&2; exit 1;; esac
+bridge=$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "$management")
+if [ -z "$bridge" ] || [ "$bridge" = '<no value>' ]; then
+    bridge="br-$(printf '%s' "$management" | cut -c 1-12)"
+fi
+case "$bridge" in *[!a-zA-Z0-9_.-]*|'') echo 'Invalid management bridge' >&2; exit 1;; esac
 host=@@HOST@@
 port=@@PORT@@
-addresses=$(getent hosts "$host" | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}' | sort -u)
+addresses=$(getent ahostsv4 "$host" | awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print $1}' | sort -u)
 [ -n "$addresses" ] || { echo 'Center has no resolved IPv4 address; no policy applied.' >&2; exit 1; }
 chain="HFBE04_$(printf '%s' "$management" | cut -c 1-12)"
-if [ -f "$state" ] && [ "$(cat "$state")" != "$chain $subnet" ]; then
+if [ -f "$state" ] && [ "$(cat "$state")" != "$chain $subnet" ] && [ "$(cat "$state")" != "$chain $subnet $bridge" ]; then
     echo 'Network changed: run restrict-egress.sh remove before applying a new policy.' >&2; exit 1
 fi
 rules=$(mktemp)
@@ -66,11 +75,16 @@ trap 'rm -f "$rules"' EXIT HUP INT TERM
 # One atomic filter-table update; repeat application does not accumulate rules.
 iptables-restore --wait 5 --noflush < "$rules"
 mkdir -p secrets
-printf '%s %s\n' "$chain" "$subnet" > "$state"
+printf '%s %s %s\n' "$chain" "$subnet" "$bridge" > "$state"
 chmod 0600 "$state"
 for parent in DOCKER-USER INPUT; do
     if ! iptables -w 5 -C "$parent" -s "$subnet" -j "$chain" 2>/dev/null; then
         iptables -w 5 -I "$parent" 1 -s "$subnet" -j "$chain"
+    fi
+    # Match the ingress bridge as well: a multihomed agent can bind a socket to
+    # its IPC address while routing out through management without NET_RAW.
+    if ! iptables -w 5 -C "$parent" -i "$bridge" -j "$chain" 2>/dev/null; then
+        iptables -w 5 -I "$parent" 1 -i "$bridge" -j "$chain"
     fi
 done
 echo "Applied bundle policy: management subnet $subnet can reach only center TCP port $port"

@@ -119,8 +119,14 @@ manifest = json.loads((Path(os.environ['HF_STACK_RESULT']).parent / 'low/manifes
 from urllib.parse import urlsplit
 endpoint = urlsplit(manifest['agent_origin'])
 
-def connect(address, port):
-    return nested('exec', agent, 'nc', '-z', '-w', '2', address, str(port), check=False).returncode == 0
+ipc_address = next(value['IPAddress'] for name, value in
+                   containers['low']['agent']['NetworkSettings']['Networks'].items()
+                   if name.endswith('_ipc'))
+
+
+def connect(address, port, source=None):
+    bind = ['-s', source] if source else []
+    return nested('exec', agent, 'nc', '-z', '-w', '2', *bind, address, str(port), check=False).returncode == 0
 
 completed = False
 try:
@@ -146,6 +152,8 @@ try:
     assert first == policy_rules(), 'Repeat application duplicated firewall rules'
     assert not connect(gateway, 29999), 'Forbidden forwarded destination is reachable'
     assert not connect(gateway, 29998), 'Forbidden host-input destination is reachable'
+    assert not connect(gateway, 29999, ipc_address), 'IPC-bound socket bypasses forwarded egress policy'
+    assert not connect(gateway, 29998, ipc_address), 'IPC-bound socket bypasses host-input policy'
     assert connect(endpoint.hostname, endpoint.port or 443), 'Center blocked by policy'
     mark('IPv4 allowlist denies previously reachable FORWARD and host INPUT fixtures; center TCP remains allowed; repeated apply is idempotent')
     run('exec', node, 'sh', rules, 'remove')

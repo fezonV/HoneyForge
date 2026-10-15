@@ -40,6 +40,8 @@ jobs:
       - name: Check formatting
         shell: bash
         run: test -z "$(gofmt -d $(git ls-files '*.go'))"
+      - name: Bundle firewall script regression
+        run: python3 scripts/test-bundle-egress.py
       - name: Full race, PostgreSQL, process and reliability acceptance
         shell: bash
         run: |
