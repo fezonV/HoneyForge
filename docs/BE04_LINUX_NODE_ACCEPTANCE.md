@@ -18,6 +18,8 @@ Command: set `HF_BUNDLE_NODE=hf-be04-linux-node`, `HF_VISITOR_BASE_PORT=28180`, 
 
 Private evidence: `deploy/secrets/stack-1792074955206/result.json` and per-level `installer.log`. These files, credentials, CA material and raw traces are ignored and not included in Git.
 
+Independent-engine runtime image IDs (short local IDs, not registry release digests): Low agent `1f69f97cd905`, decoy `fbfab56ebcc6`, visitor `9124ffea67ed`; Medium agent `306b51ac7110`, decoy `ba01cffe9a40`, visitor `5fd352f3d2d8`.
+
 ## Egress, mounts and trace
 
 New `restrict-egress.sh` is generated into the actual bundle ZIP. It targets that bundle's management subnet in the independent node's iptables namespace. Rules allow only the configured center TCP destination, handle both forwarded traffic and host-local INPUT, and can be applied/removed idempotently without deleting unrelated policy. It is explicitly an IPv4 iptables helper; nftables-only, IPv6, ingress ACLs and reboot persistence remain target-host administration tasks.
@@ -43,6 +45,6 @@ A real download while heartbeat updated the trap returned 503. PostgreSQL logged
 
 ## QA execution and limits
 
-The integrated source first passed full `bash scripts/test-qa.sh`: 122 tests, no skips, all 11 sentinels, then vet/build. A later full run including the concurrency fix passed that regression but failed the pre-existing `TestBE02SixtySecondOutageRestartAndLostCommitACK` on one HTTP 503 at 18.66 seconds. That failure is retained; its cause was not established, and it is not treated as a pass or hidden by excluding the test. A subsequent full gate with `GOFLAGS=-p=1` serializes packages while retaining race checks, the same timeouts and all acceptance criteria; its result is recorded in the PR once complete.
+The integrated source first passed full `bash scripts/test-qa.sh`: 122 tests, no skips, all 11 sentinels, then vet/build. A later full run including the concurrency fix passed that regression but failed the pre-existing `TestBE02SixtySecondOutageRestartAndLostCommitACK` on one HTTP 503 at 18.66 seconds. That failure is retained; its cause was not established, and it is not treated as a pass or hidden by excluding the test. The final full gate with `GOFLAGS=-p=1` **passed: 122 tests, zero skips, all 11 sentinels, vet and build**. It serialized packages while retaining race checks, the same timeouts and all acceptance criteria. The concurrency fix is in source commit `18112c8`; subsequent evidence-only commits do not change that source. UI build and OpenAPI validation also passed (12 existing OpenAPI warnings). GitHub Actions results are linked in PR #36.
 
 The independent engine and its firewall/packet capture are now measured. No target physical host/VM or external attack segment was supplied, so this report does not certify that host's routing, forbidden production egress, ingress firewall, reboot persistence or external MASK acceptance. Issue #4 remains open for those target-host requirements with #16/#17.
