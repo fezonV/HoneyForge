@@ -42,7 +42,10 @@ export HF_USERNAME=qa-compose-operator
 export HF_PASSWORD="$qa_password"
 "${qa_compose[@]}" exec -T -e HF_USERNAME -e HF_PASSWORD -e HF_ROLE=operator control honeyforge-control -create-user >> qa-compose.log 2>&1
 python3 tests/integration/compose-history.py seed "http://127.0.0.1:$qa_port" "$qa_dir/history.json" | tee -a qa-compose.log
-"${qa_compose[@]}" restart postgres control >> qa-compose.log 2>&1
+"${qa_compose[@]}" stop postgres >> qa-compose.log 2>&1
+python3 tests/integration/compose-history.py outage "http://127.0.0.1:$qa_port" "$qa_dir/history.json" | tee -a qa-compose.log
+"${qa_compose[@]}" up -d --wait postgres >> qa-compose.log 2>&1
+"${qa_compose[@]}" restart control >> qa-compose.log 2>&1
 curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors "http://127.0.0.1:$qa_port/readyz"
 python3 tests/integration/compose-history.py verify "http://127.0.0.1:$qa_port" "$qa_dir/history.json" | tee -a qa-compose.log
 

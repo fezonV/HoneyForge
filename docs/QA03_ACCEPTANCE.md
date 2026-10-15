@@ -54,3 +54,8 @@ No full MASK claim follows from passing API tests. Packet capture, real target
 VM/firewall/forbidden-egress and final bundle mount inspection remain open #16
 criteria. TLS does not hide destination IPs; host root is outside this isolation
 claim. See the concrete execution report for pass/fail/blocked results.
+
+The segment run exposed a separate startup defect: read-only nginx attempted
+to create FastCGI/uWSGI/SCGI temporary directories under /var/cache/nginx. Those
+paths are now explicitly under the existing /tmp tmpfs. This narrow runtime fix
+does not implement #4's remaining deployment or the proposed #36 web service.

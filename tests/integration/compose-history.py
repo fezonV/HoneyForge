@@ -5,6 +5,7 @@ import http.cookies
 import json
 import os
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -77,8 +78,27 @@ if phase == 'seed':
         assert set(ack['accepted_ids']) == {event['event_id'] for event in batch}, 'incorrect ACK IDs'
     config['services'][0]['banner'] = 'new revision after history'
     request('PATCH',f'/api/v1/profiles/{profile}',{'base_revision':1,'name':'History v2','config':config})
-    state.update(trap=trap,session=session,filtered=filtered,timeline=[e['event_id'] for e in events if e['session_id']==session])
+    retry_event = dict(events[5], event_id=str(uuid.uuid4()),session_id=str(uuid.uuid4()))
+    state.update(trap=trap,session=session,filtered=filtered,timeline=[e['event_id'] for e in events if e['session_id']==session],
+        retry_batch=[events[5],retry_event],agent_token=enrolled['agent_token'])
     with os.fdopen(os.open(state_file,os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600),'w') as stream: json.dump(state,stream)
+
+if phase == 'outage':
+    try:
+        request('POST',f'/agent/v1/traps/{state["trap"]}/events',{'events':state['retry_batch']},state['agent_token'])
+    except urllib.error.HTTPError as error:
+        assert 500 <= error.code <= 599, f'unexpected failure code {error.code}'
+    else:
+        raise AssertionError('database outage returned an ACK before commit')
+    print('PASS outage: actual stopped PostgreSQL refuses telemetry without ACK')
+    sys.exit(0)
+if phase == 'verify':
+    ack = request('POST',f'/agent/v1/traps/{state["trap"]}/events',{'events':state['retry_batch']},state['agent_token'])
+    assert set(ack['accepted_ids'])=={state['retry_batch'][1]['event_id']}, 'recovery lost new event'
+    assert set(ack['duplicate_ids'])=={state['retry_batch'][0]['event_id']}, 'recovery duplicated committed event'
+    replay = request('POST',f'/agent/v1/traps/{state["trap"]}/events',{'events':state['retry_batch']},state['agent_token'])
+    assert not replay['accepted_ids'] and set(replay['duplicate_ids'])=={e['event_id'] for e in state['retry_batch']}, 'replay was not idempotent'
+    print('PASS recovery: refused batch replays once; exact accepted/duplicate IDs match')
 
 items = pages('/api/v1/events',{'limit':31,'trap_id':state['trap'],'session_id':state['session'],'source_ip':'192.0.2.45',
     'event_type':'http.request','from':'2026-10-14T00:00:00Z','to':'2026-10-15T00:00:00Z'})

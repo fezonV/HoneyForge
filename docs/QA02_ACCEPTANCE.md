@@ -66,3 +66,8 @@ This metric is not UI rendering latency. The final dashboard latency still
 depends on #12/#13. Compose independently checks combined filters/cursors over 125 IDs and a 132-ID
 timeline before/after a real PostgreSQL/control restart on a persisted volume,
 including historical revision 1 after creating profile revision 2.
+
+The Compose gate also stops the real PostgreSQL container while control remains
+running, checks that telemetry fails without an ACK, then restores PostgreSQL
+and control and replays a mixed committed/new batch. Exact accepted/duplicate
+IDs are checked on recovery and again on a repeated replay.
