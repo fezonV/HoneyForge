@@ -157,3 +157,19 @@ jobs:
           name: qa-compose
           path: qa-compose.log
           if-no-files-found: error
+
+  security-segments:
+    name: TLS facade and Docker network segments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify disposable security segments
+        shell: bash
+        run: tests/security/run.sh
+      - name: Upload segment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-security
+          path: qa-security.log
+          if-no-files-found: error

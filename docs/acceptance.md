@@ -30,8 +30,9 @@ reported separately from errors.
 
 Compose starts a new project/volume, checks migrations/readiness, restarts
 PostgreSQL/control and verifies persistence. Cleanup is scoped to its project.
-The security command is a separate deployment gate and currently exposes the
-open MASK-2 defect in #4; its nonzero result must not be counted as acceptance.
+The security command is a required local deployment gate in CI. Its nonzero
+result must never be counted as acceptance; a passing Docker-segment run does
+not close the external VM/firewall criteria.
 See [security harness](../tests/security/README.md).
 
 `scripts/test-fe2-bundle.sh` creates its own disposable Docker-in-Docker Linux

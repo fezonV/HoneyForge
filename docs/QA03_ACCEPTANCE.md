@@ -48,8 +48,10 @@ places a formula in an exported ASN field and parses the CSV to check the
 neutralizing apostrophe. A formula in omitted payload alone was insufficient.
 
 Run `tests/security/run.sh` for separate local Docker attack/management probes
-with positive controls; see its README. The current deployment has an unresolved
-anonymous agent-facade disclosure (401 JSON), also addressed by proposed PR #36.
+with positive controls; see its README. The initial deployment exposed an anonymous agent-facade disclosure (401 JSON).
+The integrated nginx fix hides unauthenticated GET/POST and malformed enrollment
+behind an ordinary 404 while preserving authenticated delivery validation
+status codes. Real one-time enrollment and heartbeat are positive controls.
 No full MASK claim follows from passing API tests. Packet capture, real target
 VM/firewall/forbidden-egress and final bundle mount inspection remain open #16
 criteria. TLS does not hide destination IPs; host root is outside this isolation

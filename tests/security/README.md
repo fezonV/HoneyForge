@@ -15,11 +15,18 @@ public nginx configuration is copied with explicit service-readable permissions;
 the local healthcheck uses wget -Y off for loopback because BusyBox ignores
 NO_PROXY. External build/runtime traffic still uses the configured proxy.
 
-The command fails when any measured criterion fails. It is a separate deployment
-acceptance gate, not part of the passing API/unit CI gate. On the integrated dev
-baseline it is expected to expose #4's unresolved MASK-2: the agent listener
-returns a distinguishable 401 JSON API error without credentials. PR #36 proposes
-a facade fix and the web service; neither is silently included in QA integration.
+The command fails when any measured criterion fails and runs as the mandatory
+`security-segments` CI job. It checks anonymous GET and POST facades, real
+one-time enrollment, authorized heartbeat, rejection of untrusted TLS and
+unreachability from the attack client with a working same-segment control.
+Authorized event validation must retain HTTP 422 so permanent bad events can
+still be quarantined by the agent.
+
+The first successful stand startup exposed #4's anonymous 401 JSON disclosure.
+The integrated nginx fix masks unauthorized agent responses and malformed
+enrollment as the same ordinary 404 page. The basic interception pattern follows
+PR #36; enrollment-specific handling preserves authenticated delivery errors.
+PR #36's web service and the rest of #4 are not included here.
 
 These are local Docker bridge measurements. They do not establish a target VM's
 firewall rules, absence of a route to a real production network, packet-capture

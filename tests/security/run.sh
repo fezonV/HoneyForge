@@ -93,21 +93,36 @@ qa_failures=0
 record() { echo "$*" | tee -a qa-security.log; }
 # Only public safe response bodies are retained. No private payloads/cookies/keys.
 qa_status="$(curl --silent --show-error --cacert "$qa_dir/tls.crt" -o "$qa_dir/facade" -w '%{http_code}' "https://127.0.0.1:$qa_agent_port/agent/v1/traps/11111111-1111-4111-8111-111111111111/config")"
-if [[ "$qa_status" == 404 ]] && ! rg -qi 'agent|token|request_id|unauthorized' "$qa_dir/facade"; then
+if [[ "$qa_status" == 404 ]] && python3 -c 'import sys; body=open(sys.argv[1]).read().lower(); sys.exit(any(word in body for word in ("agent","token","request_id","unauthorized")))' "$qa_dir/facade"; then
  record 'PASS MASK-2 anonymous agent facade'
 else
- record "FAIL MASK-2 anonymous agent facade: HTTP $qa_status; backend error is publicly distinguishable (see #4 / PR #36)"
+ record "FAIL MASK-2 anonymous agent facade: HTTP $qa_status; backend error is publicly distinguishable"
  qa_failures=$((qa_failures+1))
 fi
+for qa_path in /agent/v1/enroll /agent/v1/traps/11111111-1111-4111-8111-111111111111/events; do
+ qa_status="$(curl --silent --show-error --cacert "$qa_dir/tls.crt" -H 'Content-Type: application/json' -d '{}' -o "$qa_dir/facade" -w '%{http_code}' "https://127.0.0.1:$qa_agent_port$qa_path")"
+ if [[ "$qa_status" != 404 ]] || ! python3 -c 'import sys; body=open(sys.argv[1]).read().lower(); sys.exit(any(word in body for word in ("agent","token","request_id","invalid_json")))' "$qa_dir/facade"; then
+  record "FAIL anonymous POST facade: $qa_path HTTP $qa_status"; qa_failures=$((qa_failures+1))
+ else record "PASS anonymous POST facade: $qa_path"; fi
+done
 qa_hash="$(printf '%s' "$qa_token" | openssl dgst -sha256 -r | cut -d ' ' -f1)"
 "${qa_compose[@]}" exec -T postgres psql -U honeyforge -d honeyforge -v ON_ERROR_STOP=1 >/dev/null <<EOF
 INSERT INTO traps(id,name,deployment_bindings) VALUES('11111111-1111-4111-8111-111111111111','segment-probe','[]');
-INSERT INTO agents(id,trap_id,token_hash) VALUES('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode('$qa_hash','hex'));
+INSERT INTO enrollment_tokens(id,trap_id,token_hash,expires_at) VALUES('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',decode('$qa_hash','hex'),now()+interval '15 minutes');
 EOF
+printf '{"trap_id":"11111111-1111-4111-8111-111111111111","token":"%s"}' "$qa_token" > "$qa_dir/enroll-body"
+qa_status="$(curl --silent --show-error --cacert "$qa_dir/tls.crt" -H 'Content-Type: application/json' --data-binary "@$qa_dir/enroll-body" -o "$qa_dir/enrolled" -w '%{http_code}' "https://127.0.0.1:$qa_agent_port/agent/v1/enroll")"
+[[ "$qa_status" == 201 ]] || { record "FAIL enrollment through facade: HTTP $qa_status"; exit 1; }
+qa_token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["agent_token"])' "$qa_dir/enrolled")"
+record 'PASS real one-time enrollment through TLS facade'
 printf 'header = "Authorization: Bearer %s"\n' "$qa_token" > "$qa_dir/curl-auth"
 qa_status="$(curl --silent --show-error --cacert "$qa_dir/tls.crt" --config "$qa_dir/curl-auth" -H 'Content-Type: application/json' -d '{"service_state":"running"}' -o /dev/null -w '%{http_code}' "https://127.0.0.1:$qa_agent_port/agent/v1/traps/11111111-1111-4111-8111-111111111111/heartbeat")"
 [[ "$qa_status" == 200 ]] || { record "FAIL authorized agent heartbeat: HTTP $qa_status"; exit 1; }
 record 'PASS authorized agent heartbeat through real TLS nginx/control/PostgreSQL'
+qa_status="$(curl --silent --show-error --cacert "$qa_dir/tls.crt" --config "$qa_dir/curl-auth" -H 'Content-Type: application/json' -d '{"events":[]}' -o /dev/null -w '%{http_code}' "https://127.0.0.1:$qa_agent_port/agent/v1/traps/11111111-1111-4111-8111-111111111111/events")"
+[[ "$qa_status" == 422 ]] || { record "FAIL authorized event validation code hidden: HTTP $qa_status"; exit 1; }
+record 'PASS authorized event validation preserves quarantine HTTP status 422'
+
 if curl --silent --show-error -o /dev/null "https://127.0.0.1:$qa_agent_port/" 2>/dev/null; then record 'FAIL untrusted TLS accepted'; exit 1; fi
 record 'PASS untrusted TLS refused'
 "${qa_compose[@]}" exec -T attack-client python -c 'import socket; socket.create_connection(("attack-target",8080),2).close()' 

@@ -13,6 +13,7 @@ QA-04 связывает независимые проверки QA-01–03 с b
 | `backend` | gofmt, полные race-тесты с process/crash, 60-секундным outage и нагрузкой; skips запрещены, `go vet`, build, закреплённый OpenAPI lint и Compose schema. PostgreSQL — disposable service. |
 | `web` | TypeScript build, ESLint, Playwright mock/reconnect/security smoke и артефакты trace/screenshot/report. |
 | `live-e2e` | `trap-park.spec.mjs` с настоящими Control API, PostgreSQL, агентами и Low/Medium decoy. Проверяются профили, два экземпляра, bundle, команды, applied revision и события. |
+| `security-segments` | TLS/nginx facade, real enrollment/heartbeat, preserved validation/quarantine codes, attack-segment probes with positive control; scoped cleanup. |
 | `compose-health` | Чистый `docker compose up --build`, миграции и `/readyz`; cleanup выполняется через `trap`. |
 
 Локальный запуск полного набора требует Go 1.27.2, Node.js 22+, Docker,
@@ -75,6 +76,6 @@ firewall и сетевые сегменты требуют собственно�
 A green workflow confirms the integrated component and live smoke gates. It does
 not close #17: full event/dashboard UI (#12/#13), secure deployment (#4), external
 MASK acceptance (#16), independent VM setup, final diagrams/slides and backup
-recording still need their own evidence. The network harness is an explicit
-separate deployment gate and can fail even when API/unit jobs pass. Browser
+recording still need their own evidence. The network harness is a mandatory fifth job; individual API/unit jobs do not
+substitute for its result. Browser
 traces/screenshots are retained on failure; HTML reports are always emitted.
