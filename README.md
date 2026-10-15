@@ -141,6 +141,9 @@ API предоставляет `/healthz`, `/readyz`, `/api/v1` для опер�
 описана в [docs/QA02_ACCEPTANCE.md](docs/QA02_ACCEPTANCE.md) и запускается
 через `./scripts/test-qa02.ps1` на отдельной PostgreSQL-базе.
 
+Проверки QA-03 для MASK-1–4, TLS, сегмента управления, секретов и интерфейсов
+описаны в [docs/QA03_ACCEPTANCE.md](docs/QA03_ACCEPTANCE.md) и запускаются
+через `./scripts/test-qa03.ps1` на отдельной PostgreSQL-базе.
 ## Что готово в текущем прототипе
 
 - `main.go` запускает HTTP-сервер, встраивает HTML-страницы и хранит последние 100 событий в потокобезопасном журнале.
