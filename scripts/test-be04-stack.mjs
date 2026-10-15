@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import https from 'node:https';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { ws as WebSocket } from '../web/node_modules/playwright-core/lib/utilsBundle.js';
@@ -16,20 +16,24 @@ const ca = readFileSync(process.env.HF_CA_FILE || join(root, 'deploy/secrets/ca.
 const credentials = JSON.parse(readFileSync(process.env.HF_OPERATOR_CREDENTIALS_FILE || join(root, 'deploy/secrets/operator.json')));
 const python = process.env.HF_PYTHON || (process.platform === 'win32' ? 'py' : 'python3');
 const docker = process.env.HF_DOCKER || 'docker';
+const bundleNode = process.env.HF_BUNDLE_NODE;
 const runID = `${Date.now()}`;
 const artifacts = join(root, 'deploy/secrets', `stack-${runID}`);
 mkdirSync(artifacts, { mode: 0o700 });
 const report = [];
 const pass = (message) => { report.push(message); console.log(`PASS: ${message}`); };
-const run = (binary, args) => new Promise((done, reject) => {
+const run = (binary, args, logFile) => new Promise((done, reject) => {
   const child = spawn(binary, args, { cwd: root, windowsHide: true });
   let output = '';
-  child.stdout.on('data', d => { output = (output + d).slice(-8000); });
-  child.stderr.on('data', d => { output = (output + d).slice(-8000); });
+  if (logFile) writeFileSync(logFile, '', { mode: 0o600 });
+  const collect = d => { output = (output + d).slice(-8000); if (logFile) appendFileSync(logFile, d); };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
   child.on('error', reject);
   child.on('exit', code => code === 0 ? done(output.trim()) : reject(new Error(`${binary} ${args[0]} failed (${code}): ${output}`)));
 });
 const center = (...args) => run(docker, ['compose', '--env-file', 'deploy/.env', '-f', 'deploy/compose.yaml', ...args]);
+const runtime = (deployment, ...args) => run(docker, [...(bundleNode ? ['exec', bundleNode, 'docker'] : []), ...deployment.args, ...args]);
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 async function wait(probe, timeout = 45000) {
   const deadline = Date.now() + timeout;
@@ -91,7 +95,7 @@ try {
     };
     const { profile } = await api('/api/v1/profiles', 'POST', { name: `BE04 ${level} ${runID}`, config });
     const port = Number(process.env.HF_VISITOR_BASE_PORT || 28080) + index;
-    const trap = await api('/api/v1/traps', 'POST', { name: `BE04 ${level} ${runID}`, deployment_node: 'Docker Desktop Linux acceptance', deployment_bindings: [{ service_id: 'web', host_port: port, bind_address: '127.0.0.1' }] });
+    const trap = await api('/api/v1/traps', 'POST', { name: `BE04 ${level} ${runID}`, deployment_node: bundleNode || 'Docker Desktop Linux acceptance', deployment_bindings: [{ service_id: 'web', host_port: port, bind_address: bundleNode ? '0.0.0.0' : '127.0.0.1' }] });
     await api(`/api/v1/traps/${trap.id}/profile`, 'PUT', { profile_id: profile.id, revision: 1 });
     const enrollment = await api(`/api/v1/traps/${trap.id}/enrollment-token`, 'POST', {});
     const bundle = await request(`${origin}/api/v1/traps/${trap.id}/bundle`, 'GET', undefined, { Cookie: cookies });
@@ -101,6 +105,30 @@ try {
     const archive = join(dir, 'bundle.zip');
     writeFileSync(archive, bundle.body, { mode: 0o600 });
     await run(python, ['-c', 'import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', archive, dir]);
+    if (bundleNode) {
+      const remoteDir = `/root/be04-${level}-${runID}`;
+      const tokenFile = join(dir, 'enrollment-input');
+      writeFileSync(tokenFile, enrollment.token, { mode: 0o600 });
+      writeFileSync(join(dir, 'center-ca.pem'), ca);
+      const args = ['compose', '-p', `be04-${level}-${runID}`, '-f', `${remoteDir}/compose.yaml`];
+      const deployment = { level, trap, profile, port, dir, remoteDir, args };
+      deployments.push(deployment);
+      await run(docker, ['exec', bundleNode, 'mkdir', '-m', '700', '-p', remoteDir]);
+      for (const [file, target] of [[archive, 'bundle.zip'], [tokenFile, 'enrollment-input'], [join(dir, 'center-ca.pem'), 'center-ca.pem']]) {
+        await run(docker, ['cp', file, `${bundleNode}:${remoteDir}/${target}`]);
+      }
+      await run(docker, ['exec', bundleNode, 'unzip', '-q', `${remoteDir}/bundle.zip`, '-d', remoteDir]);
+      console.log(`Installing ${level} from pinned source on ${bundleNode}; log: ${join(dir, 'installer.log')}`);
+      await run(docker, ['exec', bundleNode, 'sh', `${remoteDir}/install.sh`, '--ca-file', `${remoteDir}/center-ca.pem`, '--enrollment-token-file', `${remoteDir}/enrollment-input`], join(dir, 'installer.log'));
+      await runtime(deployment, 'up', '-d', '--no-build', '--wait');
+      await wait(async () => (await api(`/api/v1/traps/${trap.id}`)).agent_status === 'online');
+      await api(`/api/v1/traps/${trap.id}/commands`, 'POST', { type: 'apply_profile', expected_profile_id: profile.id, expected_revision: 1, ttl_seconds: 120 });
+      await wait(async () => (await api(`/api/v1/traps/${trap.id}`)).applied_revision === 1);
+      assert.ok((await request(`http://127.0.0.1:${port}/`)).status < 400);
+      await wait(async () => (await events(trap.id, 'http.request')).length > 0);
+      pass(`${level}: actual pinned-source install.sh on independent Docker Engine, TLS enrollment, IPC apply, visitor event`);
+      continue;
+    }
     const secrets = join(dir, 'secrets');
     mkdirSync(secrets, { mode: 0o700 });
     writeFileSync(join(secrets, 'enrollment_token'), enrollment.token, { mode: 0o600 });
@@ -140,7 +168,7 @@ try {
   const before = await events(low.trap.id, 'http.request');
   await center('stop', 'nginx'); nginxStopped = true;
   for (let i = 0; i < 4; i++) assert.ok((await request(`http://127.0.0.1:${low.port}/offline-${i}`)).status < 500);
-  await run(docker, [...low.args, 'restart', 'agent']);
+  await runtime(low, 'restart', 'agent');
   await sleep(2000);
   await center('up', '-d', '--wait', 'nginx'); nginxStopped = false;
   await connectWS();
@@ -150,11 +178,11 @@ try {
   assert.equal(replayed.length, before.length + 4);
   assert.equal(new Set(replayed.map(e => `${e.agent_id}/${e.event_id}`)).size, replayed.length);
   pass('management outage + agent restart: four queued HTTP events replayed exactly once; WS reconnect and REST reconciliation');
-  await run(docker, [...medium.args, 'stop', 'decoy']);
+  await runtime(medium, 'stop', 'decoy');
   assert.ok((await request(`http://127.0.0.1:${low.port}/`)).status < 400);
   await wait(async () => (await api(`/api/v1/traps/${medium.trap.id}`)).service_status === 'error');
   assert.equal((await api(`/api/v1/traps/${medium.trap.id}`)).agent_status, 'online');
-  await run(docker, [...medium.args, 'up', '-d', '--no-build', '--wait']);
+  await runtime(medium, 'up', '-d', '--no-build', '--wait');
   pass('stopping Medium reports service error, leaves its agent online and Low serving requests');
   const saved = await events(medium.trap.id);
   socket.close();
@@ -164,15 +192,15 @@ try {
   for (const e of saved) assert.ok(restored.some(v => v.event_id === e.event_id && v.agent_id === e.agent_id));
   await connectWS();
   pass('center/PostgreSQL restart preserves operator session and all saved Medium event identities; WS reconnects');
-  writeFileSync(join(artifacts, 'result.json'), JSON.stringify({ runID, origin, report, deployments: deployments.map(({ level, trap, profile, port, args }) => ({ level, trap_id: trap.id, profile_id: profile.id, port, compose_args: args })) }, null, 2));
+  writeFileSync(join(artifacts, 'result.json'), JSON.stringify({ runID, origin, bundle_node: bundleNode, report, deployments: deployments.map(({ level, trap, profile, port, args, remoteDir }) => ({ level, trap_id: trap.id, profile_id: profile.id, port, remote_directory: remoteDir, compose_args: args })) }, null, 2));
   console.log(`Evidence: ${artifacts}`);
-  console.log('Local prebuilt images used; this test does not claim running install.sh on a separate Linux host.');
+  console.log(bundleNode ? 'Actual install.sh executed on a separate containerized Docker Engine; physical/remote host firewall not certified.' : 'Local prebuilt images used; this test does not claim running install.sh on a separate Linux host.');
   completed = true;
 } finally {
   socket?.terminate();
   if (nginxStopped) await center('up', '-d', '--wait', 'nginx');
   if (!completed) {
     writeFileSync(join(artifacts, 'partial-result.json'), JSON.stringify({ runID, report }, null, 2));
-    for (const deployment of deployments) await run(docker, [...deployment.args, 'down']);
+    for (const deployment of deployments) await runtime(deployment, 'down');
   }
 }

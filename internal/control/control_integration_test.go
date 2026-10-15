@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -732,6 +733,46 @@ func TestOperatorDownloadsAuditedTrapBundle(t *testing.T) {
 	var bundleAuditCount int
 	if err = db.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action='trap.bundle_downloaded' AND entity_id=$1`, trap.ID).Scan(&bundleAuditCount); err != nil || bundleAuditCount != 1 {
 		t.Fatalf("bundle access audit count=%d err=%v", bundleAuditCount, err)
+	}
+	// A heartbeat may hold an update lock while a download starts. The bundle
+	// must wait and read the committed assignment, rather than return 40001/503.
+	heartbeat, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer heartbeat.Rollback(context.Background())
+	if _, err = heartbeat.Exec(ctx, `UPDATE traps SET last_seen=now() WHERE id=$1`, trap.ID); err != nil {
+		t.Fatal(err)
+	}
+	pendingBundle := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		pendingBundle <- op.request(http.MethodGet, "/api/v1/traps/"+trap.ID+"/bundle", "", false, true)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	blocked := false
+	for time.Now().Before(deadline) {
+		if err = db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+			AND query LIKE '%FROM traps WHERE id=$1 AND deleted_at IS NULL FOR SHARE%')`).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !blocked {
+		t.Fatal("download did not wait for the concurrent heartbeat lock")
+	}
+	if err = heartbeat.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case response := <-pendingBundle:
+		if response.Code != http.StatusOK || response.Header().Get("X-HoneyForge-Profile-Revision") != "1" {
+			t.Fatalf("download after heartbeat: HTTP %d %s", response.Code, response.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("download did not finish after heartbeat committed")
 	}
 }
 

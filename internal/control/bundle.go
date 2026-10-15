@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 )
 
 var gitRevisionRE = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+//go:embed bundle-egress.sh
+var bundleEgressScript string
 
 const defaultBundleSourceRepository = "https://github.com/fezonV/HoneyForge.git"
 
@@ -61,7 +65,10 @@ func (s *Server) downloadTrapBundle(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadWrite})
+	// FOR SHARE pins the desired assignment/bindings until the audited download
+	// commits. Revisions are immutable, so READ COMMITTED is sufficient and lets
+	// this read wait for a heartbeat update instead of failing with SQLSTATE 40001.
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadWrite})
 	if err != nil {
 		fail(w, r, 503, "not_ready", "deployment bundle could not be prepared", nil)
 		return
@@ -190,6 +197,12 @@ func renderTrapBundle(trapID, profileID string, revision int, trapName, deployme
 		return nil, err
 	}
 	install := renderBundleInstaller(agentOrigin, trapID, sourceRepo, sourceSHA)
+	endpoint, _ := url.Parse(agentOrigin) // validated before rendering
+	port := endpoint.Port()
+	if port == "" {
+		port = "443"
+	}
+	egress := strings.NewReplacer("@@HOST@@", shellQuote(endpoint.Hostname()), "@@PORT@@", shellQuote(port)).Replace(bundleEgressScript)
 	readme := renderBundleReadme(trapName, trapID, profileID, revision, bindings, agentOrigin, sourceSHA)
 	return zipBundle(map[string]bundleFile{
 		"compose.yaml":             {data: compose},
@@ -197,6 +210,7 @@ func renderTrapBundle(trapID, profileID string, revision int, trapName, deployme
 		"decoy-config.json":        {data: decoyConfig},
 		"manifest.json":            {data: manifest},
 		"install.sh":               {data: []byte(install), mode: 0755},
+		"restrict-egress.sh":       {data: []byte(egress), mode: 0755},
 		"README.txt":               {data: []byte(readme)},
 		"deployment-bindings.json": {data: portsJSON},
 	})
@@ -443,7 +457,7 @@ func shellQuote(value string) string {
 func renderBundleReadme(trapName, trapID, profileID string, revision int, bindings []contracts.DeploymentBinding, agentOrigin, sourceSHA string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "HoneyForge deployment bundle\n\nTrap: %s (%s)\nProfile: %s, revision %d\nControl agent origin: %s\nRuntime source commit: %s\n\n", trapName, trapID, profileID, revision, agentOrigin, sourceSHA)
-	out.WriteString("This archive contains a decoy configuration and a Compose manifest. It does not contain an enrollment token. The installer prompts for a fresh one-time token and generates separate random secrets for the private agent/decoy IPC channels. The assigned profile includes synthetic visitor credentials; keep this archive operator-only.\n\n")
+	out.WriteString("This archive contains a decoy configuration and a Compose manifest. It does not contain an enrollment token. The installer prompts for a fresh one-time token and generates separate random secrets for the private agent/decoy IPC channels. The assigned profile includes synthetic visitor credentials; keep this archive operator-only.\n\nOn the prepared Linux iptables Docker host, apply the bundled restrict-egress.sh as root before acceptance. It allows only center TCP from the management subnet, preserves private IPC and fails on unsupported IPv6/nftables-only setups. Use 'sh restrict-egress.sh remove' before compose down or deleting networks. Reapply after center DNS, Docker or host restart; firewall persistence and ingress policy belong to host administration. The installer does not claim that a host firewall was configured.\n\n")
 	out.WriteString("Before starting, prepare a host with Docker Engine, the Docker Compose plugin, git, openssl, and outbound HTTPS access to the configured HoneyForge agent origin, the source repository, Docker image registries, and the Go module proxy. Open only the visitor ports listed below in the host firewall. The default bind address 0.0.0.0 listens on every host interface.\n\nVisitor port bindings (host -> container):\n")
 	for _, binding := range bindings {
 		address := binding.BindAddress
@@ -464,7 +478,7 @@ type bundleFile struct {
 func zipBundle(files map[string]bundleFile) ([]byte, error) {
 	var output bytes.Buffer
 	archive := zip.NewWriter(&output)
-	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "deployment-bindings.json", "manifest.json", "install.sh", "README.txt"} {
+	for _, name := range []string{"compose.yaml", "compose.build-ca.yaml", "decoy-config.json", "deployment-bindings.json", "manifest.json", "install.sh", "restrict-egress.sh", "README.txt"} {
 		file, ok := files[name]
 		if !ok {
 			continue

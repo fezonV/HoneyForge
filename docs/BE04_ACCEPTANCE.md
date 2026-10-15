@@ -49,6 +49,8 @@ Repeated partial test runs initially exhausted Docker's default subnet pool. Onl
 
 ## Remaining acceptance boundary
 
+Subsequent continuation integrated the latest QA/dev changes, ran the real pinned-source installer on an independent Docker Engine and added measured IPv4 egress, mounts and TLS-capture evidence. See [BE04_LINUX_NODE_ACCEPTANCE.md](BE04_LINUX_NODE_ACCEPTANCE.md) for the newer results and the remaining target-host boundary; the paragraph below describes the earlier local-image run.
+
 Docker Desktop's Linux engine and local generated-bundle manifests are tested here. This is not a new execution of the pinned-source `install.sh` on a separate physical/remote Linux host; prior installer evidence is recorded in [FE2-01 acceptance](FE201_ACCEPTANCE.md). Production firewall probes from the actual attack segment, target host TLS/network configuration and full external MASK/QA acceptance remain separate. The wrong-CA probe is not evidence of an expired-certificate or packet-capture test on the target host.
 
 Local Low/Medium, isolation and restoration evidence is now recorded. Issue #4 remains open for acceptance on the intended target hosts and external attack segment, together with #16/#17. The shell probes and local stack test do not replace that external acceptance.
