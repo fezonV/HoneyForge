@@ -137,6 +137,9 @@ API предоставляет `/healthz`, `/readyz`, `/api/v1` для опер�
 запускаются одной командой из [docs/QA01_ACCEPTANCE.md](docs/QA01_ACCEPTANCE.md):
 `./scripts/test-qa01.ps1` с `TEST_DATABASE_URL`, указывающей на отдельную
 тестовую базу.
+Сквозная приёмка QA-02 для Low/Medium, команд и отказоустойчивой доставки
+описана в [docs/QA02_ACCEPTANCE.md](docs/QA02_ACCEPTANCE.md) и запускается
+через `./scripts/test-qa02.ps1` на отдельной PostgreSQL-базе.
 
 ## Что готово в текущем прототипе
 
