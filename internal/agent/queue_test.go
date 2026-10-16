@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -32,7 +33,8 @@ func TestQueueUsesPrivateFilesAndFullDurability(t *testing.T) {
 	}
 	for _, name := range []string{path, path + "-wal", path + "-shm"} {
 		info, err := os.Stat(name)
-		if err != nil || info.Mode().Perm()&0077 != 0 {
+		// Windows exposes synthetic permission bits rather than Unix mode bits.
+		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
 			t.Fatalf("private file %s: info=%v err=%v", name, info, err)
 		}
 	}

@@ -29,6 +29,9 @@ func TestAgentProcessCrashRetainsAcknowledgedIPCEvents(t *testing.T) {
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "agent")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build agent: %v\n%s", err, output)
@@ -101,7 +104,7 @@ func TestAgentProcessCrashRetainsAcknowledgedIPCEvents(t *testing.T) {
 	}
 	var process *exec.Cmd
 	stop := func() {
-		if process != nil {
+		if process != nil && process.Process != nil {
 			_ = process.Process.Kill()
 			_ = process.Wait()
 			process = nil
